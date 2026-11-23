@@ -1,0 +1,15 @@
+[Unit]
+Description=LiveRecorder
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/live-rec-lab
+ExecStart=%h/.local/bin/uv run --locked live-rec-lab start
+Restart=on-failure
+RestartSec=5
+UMask=0077
+KillMode=mixed
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

@@ -1,20 +1,27 @@
 # 設定
 
-> **位置付け**：設定・認証情報・録画ルートの実装と受け入れ確認時に参照する運用補助資料です。 要件は `requirements.md`、画面仕様は `docs/UI_UX.md` を優先し、以下に含まれる過去の試作状況を新規実装の完成証拠としません。実装後は現行コード・テスト結果に合わせて更新してください。
+通常の設定はWebの「設定」にあります。認証情報やインスタンスのパスには環境変数を使います。`.env` はリポジトリのルートで起動する場合に読み込まれ、プロセス環境の値が優先されます。
 
-通常の設定は画面の「設定」から行います。`PUT /api/v1/settings` は過去の実装でのAPI記述であり、現行コードと初期FeatureのHTTP契約を確認してから利用してください。秘密は設定テーブルに入れません。`.env`はuvが自動で読み込むとは限らないため、CLIコマンドは`uv run --locked --env-file .env ...`を使用してください（`.env`を作成済みの場合）。
-
-| 環境変数 | 意味 |
+| 環境変数 | 内容 |
 | --- | --- |
-| `TWITCASTING_CLIENT_ID` | ツイキャスアプリの Client ID |
-| `TWITCASTING_CLIENT_SECRET` | Client Secret |
-| `SIGN_API_KEY` | Euler Stream の API キー。TikTokLive が接続時に参照します |
-| `LIVE_REC_LAB_DATA_DIR` | SQLite を置くディレクトリ。既定は `~/.local/share/live-rec-lab/data` |
-| `LIVE_REC_LAB_STATE_DIR` | ログと endpoint.json。既定は `~/.local/state/live-rec-lab` |
-| `LIVE_REC_LAB_RECORDING_ROOT` | DBに未設定のとき初回の保存先へ反映するWindows側の絶対パス。試作専用例：`/mnt/d/live-rec-lab/recordings` |
+| `TWITCASTING_CLIENT_ID`、`TWITCASTING_CLIENT_SECRET` | 公式APIのHTTP Basic認証 |
+| `SIGN_API_KEY` | Euler Streamの署名API用。利用可能な場合に設定 |
+| `LIVE_REC_LAB_DATA_DIR` | SQLiteのディレクトリ。既定 `~/.local/share/live-rec-lab/data` |
+| `LIVE_REC_LAB_STATE_DIR` | ログ・実行状態。既定 `~/.local/state/live-rec-lab` |
+| `LIVE_REC_LAB_RECORDING_ROOT` | DBに保存先が未登録の場合の録画ルート。専用パスの例は `/mnt/d/live-rec-lab/recordings` |
+| `LIVE_REC_LAB_EXISTING_RECORDING_ROOTS` | 他のLiveRecorderや試作の実効ルート。WSLの絶対パスをセミコロンで区切る。利用中の既存ルートがないことを確認した場合のみ `none` |
+| `LIVE_REC_LAB_FFMPEG_BIN` | 任意。実行可能な `ffmpeg` と `ffprobe` が揃う絶対ディレクトリ。未指定時は実行プロセスのPATHを使用 |
 
-`/mnt/` 配下をデータベースや状態ファイルの場所にはできません。複数worktree・試作インスタンスを同時起動する場合は、`LIVE_REC_LAB_DATA_DIR`、`LIVE_REC_LAB_STATE_DIR` とWindows側の**録画動画・SRT保存ルート**をそれぞれ分けてください。録画保存先がDB設定に保存済みなら、環境変数を変更するだけで切り替わったと判断せず、起動時に有効な保存先を確認してください。起動前には既存LiveRecorderと別試作の**実効ルート**を確認し、Windows上で同一・親子関係になる設定を許可しません。既存アプリの保存先を自動判別できないときは運用者が設定を照合してください。
+SQLiteと実行状態はWSLのLinux側に置きます。別インスタンスではDB、状態／ログ用ディレクトリ、録画ルートを分離してください。DBに保存済みの録画ルートは環境値に優先します。比較対象が未確認、同一や親子のパス、ドライブ未接続、権限不足、容量不足の場合は、システム状態やログで録画開始が保留された理由を確認できます。
 
-監視回数は TikTok が 0 より大きく 10 以下、ツイキャスが 0 より大きく 60 以下です。**録画保存期限**`0`は動画の自動削除をしません。**コメント保存期限**は別設定（初期`0`＝無期限、正整数＝セッション収束日時からの日数）で、対象になったSQLiteコメントと派生SRTを期限削除します。動画と配信履歴は残り、**稼働DB・アプリ管理のSRT**から削除済みコメント・SRTは通常操作で復元・再生成しません。`backup`による**古い手動SQLiteバックアップは自動で削除されず、期限切れのコメントが含まれるものは利用者が安全に破棄・更新**します。手動復元の前には保持期限とSRT削除整合を再評価し、未確認のまま監視を再開しないでください。録画品質の `best` / `worst` は再エンコードではなく、Streamlink のストリーム選択です。
+| 設定領域 | 主な動作 |
+| --- | --- |
+| 監視 | 初期値は各10回／分。TikTokは0より大きく10以下、ツイキャスは0より大きく60以下。小数可。サービス単位で共有し、次の巡回へ反映 |
+| 録画・保存 | 品質、選ぶエンジン、同時録画数、容量、保存先。動画の自動削除は初期OFF。動画期限の0日は日数による期限なし |
+| コメント・SRT | 全体のコメントON/OFFは配信者ごとの値と合わせて判定。コメント保存期限の初期値0は無期限。正整数は収束時刻からの日数 |
+| 表示 | IANAタイムゾーンは初期 `Asia/Tokyo`。Windows標準／Noto Sans JP |
+| 詳細設定 | ログレベルとWebポート。ポート変更は再起動後。0はOSの自動割り当て |
 
-画面仕様では「監視」「録画・保存」「コメント・SRT」「表示」「詳細設定」の 5 領域に分けます。表示フォントはWindows標準／Noto Sans JPの2択、テーマはライト系1種類です。ログレベルと待ち受けポートは詳細設定に置き、再起動が必要な項目は画面で明示します。「ログ」画面は読み取り専用です。対応状況は [制限と未検証](LIMITATIONS.md#仕様変更への対応状況) を参照してください。
+コメント期限に達した場合は、稼働DB内のコメントと管理SRTを削除し、動画と履歴を保持します。旧手動バックアップには本文と投稿者情報が残り得ます。バックアップの廃棄・差し替えと手動復元後の手順は [WSL2導入と運用](INSTALL_WSL2.md) を参照してください。
+
+RESTで設定変更する場合は、`GET /api/v1/settings` の `revision` とレスポンスの `X-CSRF-Token` を取得してください。`PUT /api/v1/settings` のJSONに変更項目と `revision` を含め、同名のヘッダーにトークンを指定します。保存後の版が異なる場合は再取得が必要です。

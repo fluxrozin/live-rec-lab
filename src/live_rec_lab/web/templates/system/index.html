@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<dl class="kv">
+  <div><dt>監視ワーカーの最終稼働記録</dt><dd>{{ "停止設定" if worker_disabled else worker_heartbeat }}</dd></div>
+  {% if not retention_ready %}<div><dt>監視の再開</dt><dd>削除・復元の照合待ち</dd></div>{% endif %}
+  <div><dt>最終監視確認</dt><dd>{{ checked }}</dd></div>
+  <div><dt>SQLite ジャーナル</dt><dd>{{ journal }}</dd></div>
+  <div><dt>プロセス</dt><dd class="num">{{ pid }}</dd></div>
+  <div><dt>保存先</dt><dd>{{ root }} / {{ root_state }}</dd></div>
+  <div><dt>最後に記録した録画照合</dt><dd>{{ last_recovery }}</dd></div>
+  <div><dt>未確定の録画</dt><dd>{{ pending_segments }}件</dd></div>
+  <div><dt>未完了の削除</dt><dd>{{ pending_deletions }}件</dd></div>
+  <div><dt>空き容量</dt><dd>{{ free }}</dd></div>
+  <div><dt>ツイキャス資格情報</dt><dd>{{ twitcasting }}</dd></div>
+  <div><dt>ツイキャス API残枠</dt><dd>{{ api_remaining if api_remaining is not none else "未取得" }}</dd></div>
+  <div><dt>Euler Stream キー</dt><dd>{{ euler }}</dd></div>
+</dl>
+<h2>依存コマンド</h2>
+<table>
+  <thead><tr><th>名前</th><th>状態</th></tr></thead>
+  <tbody>
+    {% for tool in media_tools %}
+    <tr><td>{{ tool.name }}</td><td>
+      {% if tool.version %}{{ tool.version }}<br><code>{{ tool.path }}</code>
+      <br>デコーダー {{ tool.codecs|join(" / ") if tool.codecs else "対象を確認できません" }}
+      {% else %}実行可能な組を確認できません{% endif %}
+    </td></tr>
+    {% endfor %}
+    {% for tool in tools %}
+    <tr><td>{{ tool.name }}</td><td>{% if tool.ok %}見つかりました{% else %}見つかりません{% endif %}</td></tr>
+    {% endfor %}
+    {% for item in versions %}
+    <tr><td>{{ item.name }}</td><td class="num">{{ item.version }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<h2>直近の警告・エラー</h2>
+{% if events %}
+<ul class="events">
+  {% for event in events %}
+  <li><span class="sev">{{ event.severity }}</span> {{ event.at }} {{ event.message }}
+    <a href="{{ event.log_url }}">関連ログを絞り込む</a>
+    {% if event.session_id %}<a href="/recordings/{{ event.session_id }}">関連セッション</a>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>記録された警告・エラーはありません。</p>
+{% endif %}
+{% endblock %}

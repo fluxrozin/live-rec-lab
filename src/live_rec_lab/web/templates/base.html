@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja" data-font="{{ font }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} — LiveRecorder</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/vendor/htmx-2.0.4.min.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="side">
+      <p class="brand{% if recording_active %} recording-brand{% endif %}" data-recording="{{ 'yes' if recording_active else 'no' }}">LiveRecorder</p>
+      <nav aria-label="メイン">
+        {% for group, links in nav %}
+        <p class="group">{{ group }}</p>
+        {% for href, label in links %}
+        <a href="{{ href }}" {% if active_path == href %}aria-current="page"{% endif %}>{{ label }}</a>
+        {% endfor %}
+        {% endfor %}
+      </nav>
+    </aside>
+    <div class="main">
+      <header class="top">
+        <h1>{{ title }}</h1>
+        <p class="asof">最終取得 <time id="display-asof">{{ asof }}</time></p>
+      </header>
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</body>
+</html>

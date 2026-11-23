@@ -1,0 +1,3 @@
+<span{% if session.comments_updating %} data-recording-comment-count
+  hx-get="/recordings/{{ session.id }}?comment_count_only=true"
+  hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>{{ session.comments }}</span>

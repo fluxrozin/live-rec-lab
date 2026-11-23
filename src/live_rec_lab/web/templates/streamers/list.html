@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "streamers/form.html" import editor %}
+{% block content %}
+{% if return_logs is not none %}<p><a href="/logs{% if return_logs %}?{{ return_logs }}{% endif %}">ログの検索結果へ戻る</a></p>{% endif %}
+{% if filtered %}<p><a href="/streamers">配信者一覧に戻る</a></p>{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if saved %}<p role="status">変更を保存しました</p>{% endif %}
+<div class="section-toolbar">
+  <form method="get" action="/streamers" class="inline">
+    <label>サービス
+      <select name="platform">
+        <option value="">すべて</option>
+        <option value="tiktok" {{ "selected" if platform == "tiktok" }}>TikTok LIVE</option>
+        <option value="twitcasting" {{ "selected" if platform == "twitcasting" }}>ツイキャス</option>
+      </select>
+    </label>
+    <button>絞り込む</button>
+  </form>
+  <button type="button" data-dialog-open="streamer-new">配信者を追加</button>
+</div>
+{{ editor(csrf) }}
+{% if rows %}
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>配信者</th><th>サービス</th><th>監視</th><th>録画</th><th>コメント収集</th><th>最終確認</th><th>操作</th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <th scope="row">{{ row.name }}<div class="muted"><code>{{ row.account }}</code></div></th>
+      <td>{{ "TikTok LIVE" if row.platform == "tiktok" else "ツイキャス" }}</td>
+      <td><span class="setting">{{ "ON" if row.monitoring else "OFF" }}</span> {{ row.status }}</td>
+      <td><span class="setting">{{ "ON" if row.recording else "OFF" }}</span> {{ row.recording_state }}</td>
+      <td><span class="setting">{{ "ON" if row.comments else "OFF" }}</span> {{ row.comment_state }}</td>
+      <td><time>{{ row.checked }}</time>
+        <details><summary>過去の時刻</summary>配信 {{ row.last_live }}<br>録画 {{ row.last_recording }}</details>
+      </td>
+      <td>
+        <button type="button" data-dialog-open="streamer-{{ row.id }}">編集</button>
+        <a href="/recordings?streamer_id={{ row.id }}">録画履歴</a>
+        <button class="quiet" type="button" data-dialog-open="archive-{{ row.id }}">削除</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% for row in rows %}
+  {{ editor(csrf, row) }}
+  <dialog id="archive-{{ row.id }}" aria-labelledby="archive-title-{{ row.id }}">
+    <form method="post" action="/streamers/{{ row.id }}/delete">
+      <h2 id="archive-title-{{ row.id }}">{{ row.name }}を監視対象から削除</h2>
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="confirm" value="delete">
+      <p>監視・録画・コメント収集を停止します。配信履歴とファイルは保持します。</p>
+      <div class="dialog-actions">
+        <button type="button" data-dialog-close autofocus>キャンセル</button>
+        <button type="submit" class="danger">監視対象から削除</button>
+      </div>
+    </form>
+  </dialog>
+{% endfor %}
+{% else %}
+<p>{{ "条件に一致する配信者はありません。" if platform or filtered else "監視対象はありません。" }}</p>
+{% endif %}
+{% endblock %}

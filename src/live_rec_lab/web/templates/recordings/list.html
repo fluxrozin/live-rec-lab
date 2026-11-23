@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form class="inline" method="get" action="/recordings">
+  <label>検索 <input name="q" value="{{ q }}"></label>
+  <label>サービス
+    <select name="platform">
+      <option value="">すべて</option>
+      <option value="tiktok" {% if platform == "tiktok" %}selected{% endif %}>TikTok</option>
+      <option value="twitcasting" {% if platform == "twitcasting" %}selected{% endif %}>ツイキャス</option>
+    </select>
+  </label>
+  <label>から <input type="date" name="start" value="{{ start }}"></label>
+  <label>まで <input type="date" name="end" value="{{ end }}"></label>
+  {% if streamer_id %}<input type="hidden" name="streamer_id" value="{{ streamer_id }}">{% endif %}
+  <label>録画状態
+    <select name="recording_status">
+      <option value="">すべて</option>
+      <option value="none"{% if recording_status == "none" %} selected{% endif %}>未録画</option>
+      {% for key, label in recording_labels.items() %}
+      <option value="{{ key }}"{% if recording_status == key %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>並び順 <select name="sort"><option value="">新しい順</option><option value="oldest"{% if sort == "oldest" %} selected{% endif %}>古い順</option></select></label>
+  <button type="submit">絞り込む</button>
+  <a href="/recordings">条件をクリア</a>
+</form>
+{% if rows %}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>配信者</th><th>サービス・題名</th><th>配信時刻</th><th>録画</th><th>コメント</th></tr></thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><a href="/recordings/{{ row.id }}?return_q={{ return_q | urlencode }}">{{ row.who }}</a></td>
+      <td>{{ row.platform }}<br>{{ row.title }}</td>
+      <td>{{ row.started }}<br>{{ row.ended }}<br>{{ row.status }}</td>
+      <td>{{ row.recording }}<br>{{ row.file_count if row.file_count is not none else "未取得" }} 本{% if row.file_count %}
+      ／ {{ row.duration if row.duration is not none else '未取得' }}{% if row.duration is not none %} 秒{% endif %}
+      ／ {{ row.file_size if row.file_size is not none else '未取得' }}{% if row.file_size is not none %} B{% endif %}
+      {% endif %}</td>
+      <td>{{ row.comment_status or "未収集" }}<br>{% with session=row %}{% include "recordings/comment_count.html" %}{% endwith %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% elif not error %}
+<p>条件に合う配信記録はありません。</p>
+{% endif %}
+{% if page %}<p class="muted">{{ page }} ページ</p>{% endif %}
+{% if previous_url %}<a href="{{ previous_url }}">前のページ</a>{% endif %}
+{% if next_url %}<a href="{{ next_url }}">次のページ</a>{% endif %}
+{% endblock %}

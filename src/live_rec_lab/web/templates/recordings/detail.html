@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/recordings{% if return_q %}?{{ return_q }}{% endif %}">録画履歴へ戻る</a></p>
+{% if return_logs is not none %}<p><a href="/logs{% if return_logs %}?{{ return_logs }}{% endif %}">ログの検索結果へ戻る</a></p>{% endif %}
+{% if return_comments is not none %}<p><a href="/comments{% if return_comments %}?{{ return_comments }}{% endif %}">コメントの検索結果へ戻る</a></p>{% endif %}
+<h2>{{ session.who }} / {{ session.title }}</h2>
+<dl class="kv">
+  <div><dt>状態</dt><dd>{{ session.status }}</dd></div>
+  <div><dt>録画</dt><dd>{{ session.recording }} · {{ (session.file_count|string + " 本") if session.file_count is not none else "未取得" }}</dd></div>
+  <div><dt>最新録画ジョブ</dt><dd>{{ session.latest_recording }}</dd></div>
+  <div><dt>コメント</dt><dd>{{ session.comment_status or "未収集" }} · {% include "recordings/comment_count.html" %}</dd></div>
+  <div><dt>サービス</dt><dd>{{ session.platform }}</dd></div>
+  <div><dt>配信時刻</dt><dd>{{ session.started }} ～ {{ session.ended }}</dd></div>
+  {% if session.end_reason %}<div><dt>収束</dt><dd>{{ session.converged }} · {{ session.end_reason }}</dd></div>{% endif %}
+</dl>
+{% if session.open %}
+{% if not session.manual_stop %}<form method="post" action="/recordings/{{ session.id }}/stop" class="inline">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <button type="submit">手動停止</button>
+</form>
+{% else %}<form method="post" action="/recordings/{{ session.id }}/resume" class="inline">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <button type="submit">手動再開</button>
+</form>
+{% endif %}{% endif %}
+<h2>録画セグメント</h2>
+{% if segments %}
+<table>
+  <thead><tr><th>番号</th><th>時間</th><th>形式・サイズ</th><th>検証</th><th>字幕</th><th></th></tr></thead>
+  <tbody>
+    {% for segment in segments %}
+    <tr>
+      <td class="num">{{ segment.number if segment.number is not none else "未採番" }}<br><small>ジョブ {{ segment.job }}</small></td>
+      <td>{{ segment.start }}<br>{{ segment.end }}<br>{% if segment.duration is number %}{{ segment.duration }} 秒{% else %}未取得{% endif %}</td>
+      <td>{% if segment.file_name %}<code>{{ segment.file_name }}</code><br>{% endif %}{{ segment.format }}<br>{% if segment.size is not none %}{{ segment.size }} B{% else %}未取得{% endif %}</td>
+      <td>{{ segment.status }}</td>
+      <td>{{ segment.srt }}{% if segment.provisional %} · コメント確定待ち{% endif %}{% if segment.srt_error %} {{ segment.srt_error }}{% endif %}<br>生成 {{ segment.generated }}<br>同期 {{ segment.sync }}</td>
+      <td>
+        {% if segment.can_regenerate %}
+        <form method="post" action="/recordings/segments/{{ segment.id }}/srt" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <label>時刻補正（ms） <input type="number" name="offset_ms" value="{{ segment.offset_ms if segment.offset_ms is not none else '' }}" min="-86400000" max="86400000"></label>
+          <button type="submit">字幕を再生成</button>
+        </form>
+        {% else %}再生成不可{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>セグメントはありません。</p>
+{% endif %}
+<p><a href="/comments?session_id={{ session.id }}">この配信のコメント</a></p>
+{% if gaps or session.recording_error or session.comment_error or session.comment_end_reason or session.unverified_segment_count or session.failed_recording_jobs %}
+<h2>欠損・失敗</h2>
+{% if session.failed_recording_jobs %}<p>一部取得・失敗の録画ジョブ {{ session.failed_recording_jobs }}件</p>{% endif %}
+{% if session.unverified_segment_count %}<p>未確定・無効のセグメント {{ session.unverified_segment_count }}本</p>{% endif %}
+{% if session.comment_end_reason %}<p>コメント収集の終了理由 {{ session.comment_end_reason }}</p>{% endif %}
+{% if session.comment_error %}<p class="error">{{ session.comment_error }}</p>{% endif %}
+{% if session.recording_error %}<p class="error">{{ session.recording_error }}</p>{% endif %}
+<ul class="events">
+{% for gap in gaps %}<li>{{ '録画' if gap.type == 'recording' else 'コメント' if gap.type == 'comments' else gap.type }} {{ gap.start }} ～ {{ gap.end }} {{ gap.reason }}</li>{% endfor %}
+</ul>
+{% endif %}
+<p><a href="{{ log_url }}">この配信の関連ログ</a></p>
+<h2>危険な操作</h2>
+{% if srt_result %}<p role="status">{{ srt_result }}</p>{% endif %}
+{% if deleted %}<p role="status">動画・字幕を削除しました。配信履歴を保持しています。</p>{% endif %}
+{% if deletion and deletion.status != 'completed' %}
+<p class="error" role="alert">操作 {{ deletion.id }} · {{ '一部失敗' if deletion.status == 'partial' else '削除処理中' }}
+{% if error %} · {{ error }}{% endif %}</p>
+{% endif %}
+{% if delete_allowed %}
+<button type="button" class="quiet" data-dialog-open="remove-session">削除を確認</button>
+<dialog id="remove-session" aria-labelledby="remove-session-title">
+  <form method="post" action="/recordings/{{ session.id }}/delete">
+    <h2 id="remove-session-title">{{ session.who }}の配信を削除</h2>
+    <p>{{ session.title }} · 動画 {{ session.file_count or 0 }}本</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="confirm" value="delete">
+    <fieldset>
+      <legend>削除の範囲</legend>
+      <label><input type="radio" name="mode" value="files" required> ファイルのみ（動画・字幕）</label>
+      <label><input type="radio" name="mode" value="files_and_history" required> ファイル＋履歴（動画・字幕・コメント・配信記録）</label>
+    </fieldset>
+    <p>削除したデータは通常の操作で復元できません。</p>
+    <div class="dialog-actions">
+      <button type="button" data-dialog-close autofocus>キャンセル</button>
+      <button type="submit" class="danger">選択した範囲を削除</button>
+    </div>
+  </form>
+</dialog>
+{% else %}
+<p class="muted">停止・確定した配信はここから削除できます。</p>
+{% endif %}
+{% endblock %}

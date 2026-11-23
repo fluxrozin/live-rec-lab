@@ -1,0 +1,41 @@
+{% macro switch(name, label, enabled, suffix) %}
+<label><span id="{{ name }}-label-{{ suffix }}">{{ label }}</span>
+  <select name="{{ name }}_enabled" aria-labelledby="{{ name }}-label-{{ suffix }}" required>
+    <option value="1" {{ "selected" if enabled }}>ON</option>
+    <option value="0" {{ "selected" if not enabled }}>OFF</option>
+  </select>
+</label>
+{% endmacro %}
+{% macro editor(csrf, row=none) %}
+{% set suffix = row.id if row else "new" %}
+<dialog id="streamer-{{ row.id if row else 'new' }}" aria-labelledby="editor-title-{{ row.id if row else 'new' }}">
+  <form method="post" class="editor" action="/streamers{% if row %}/{{ row.id }}{% endif %}" data-dirty-form>
+    <h2 id="editor-title-{{ row.id if row else 'new' }}">{{ "配信者を編集" if row else "配信者を追加" }}</h2>
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {% if row %}
+      <p>{{ row.platform }} · <code>{{ row.account }}</code></p>
+    {% else %}
+      <label>サービス
+        <select name="platform">
+          <option value="tiktok">TikTok LIVE</option>
+          <option value="twitcasting">ツイキャス</option>
+        </select>
+      </label>
+      <label>アカウント <input name="account" maxlength="300" required autocomplete="off"
+             aria-describedby="account-help" autofocus></label>
+      <small id="account-help">ユーザーID。TikTokは @ID とプロフィールURLも入力できます。</small>
+    {% endif %}
+    <label>表示名 <input name="display_name" maxlength="128" value="{{ row.name if row else '' }}"></label>
+    <div class="switches">
+      {{ switch("monitoring", "監視", row.monitoring if row else true, suffix) }}
+      {{ switch("recording", "録画", row.recording if row else true, suffix) }}
+      {{ switch("comments", "コメント収集", row.comments if row else true, suffix) }}
+    </div>
+    <small>監視をOFFにすると録画・コメント収集も停止します。録画とコメント収集は個別に停止できます。</small>
+    <div class="dialog-actions">
+      <button type="button" data-dialog-close>キャンセル</button>
+      <button type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+{% endmacro %}

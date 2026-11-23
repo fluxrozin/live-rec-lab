@@ -1,30 +1,49 @@
-# 導入（Windows 11 + WSL2）
+# Windows 11＋WSL2への導入
 
-> **位置付け**：WSL2起動・導入・運用化の実装と、導入手順の検証時に参照する運用補助資料です。 要件は `requirements.md`、画面仕様は `docs/UI_UX.md` を優先し、以下に含まれる過去の試作状況を新規実装の完成証拠としません。実装後は現行コード・テスト結果に合わせて更新してください。
+## 初回の起動
 
-この手順は、リポジトリを WSL2 の Linux 側に置いて使う場合のものです。実配信への接続成否は環境依存であり、ここでは起動までを説明します。
-
-1. Windows 11 で WSL2 の Ubuntu 24.04 を使える状態にします。
-2. リポジトリを Linux のホーム配下に置きます。例: `~/projects/live-rec-lab`。
-3. Python 3.12 と [uv](https://docs.astral.sh/uv/) を入れます。要件はPython 3.12です。実行前に現行リポジトリの `.python-version`、`pyproject.toml`、`uv.lock` が整合することを確認してください。
-4. FFmpeg（`ffmpeg` と `ffprobe`）を Ubuntu に入れます。
-5. リポジトリで `uv sync --locked` を実行します。
-6. `.env.example` を `.env` にコピーし、使うときだけツイキャスの Client ID / Secret と Euler Stream のキーを入れます。値はダミーのままでは外部サービスに接続できません。`.env` は Git に入れません。**uvはこのファイルを暗黙に読み込まないため、以降のCLIでは`--env-file .env`を明示**します。
-7. 録画先の Windows ドライブを決めます。**試作専用の例**: `/mnt/d/live-rec-lab/recordings`。既存の別アプリケーションLiveRecorderや別worktree／試作インスタンスのDB・状態／ログ・動画／SRT保存先とは分離してください。**既存アプリの実効録画ルートをそのアプリの設定で確認**し、本試作のDBに保存済みの録画先がある場合は環境変数よりも**実際に適用される設定**を調べ、Windows上で同一・親子関係がないことを起動前に確認します。自動確認できない場合は手動で確かめ、未確認のまま安全な分離を前提に運用しないでください。ドライブが未マウントのときはLinux側へ自動で切り替えません。
-8. 初回起動:
+1. WindowsのPowerShellで `wsl -l -v` を実行し、UbuntuがWSLバージョン2で起動することを確認します。Ubuntu 24.04 LTSを基準とします。
+2. リポジトリをWSLのホーム配下に置き、作業ディレクトリをリポジトリのルートへ移します。一般ユーザーでPython 3.12、uv、FFmpegを準備します。実際の実行環境で `ffmpeg -version` と `ffprobe -version` を確認します。
+3. `uv sync --locked` を実行します。資格情報を使う場合は `.env.example` を `.env` にコピーし、権限を `chmod 600 .env` に設定してから値を記入します。
+4. 録画する場合は専用のWindowsドライブを選びます。他のアプリや試作の**現在の実効録画ルート**をそれぞれの設定から確認し、`LIVE_REC_LAB_EXISTING_RECORDING_ROOTS` に設定します。DBやログのディレクトリも別々にします。変数や設定の詳細は [設定](CONFIGURATION.md) を参照してください。
+5. WSL内で起動します。起動時にSQLiteのマイグレーションと未完了処理の照合を行います。
 
 ```bash
-export LIVE_REC_LAB_RECORDING_ROOT=/mnt/d/live-rec-lab/recordings
-uv run --locked --env-file .env live-rec-lab start
+uv run --locked live-rec-lab start
 ```
 
-9. 表示された `http://127.0.0.1:<port>` を Windows のブラウザで開きます。ログインはありません。
-10. 同じ URL は `uv run --locked --env-file .env live-rec-lab url` でも確認できます。プロセスがいないときは古い URL を出しません。
-11. 配信者を登録します。確定UI仕様の画面名は「配信者一覧」です（2026-11-23の試行記録では「監視対象」と表示）。保存先は設定画面でも変更できます。
-12. 停止は `uv run --locked --env-file .env live-rec-lab stop` です。
-13. データベースの複製は `uv run --locked --env-file .env live-rec-lab backup <出力ファイル>` です。稼働中のDBファイルをそのままコピーしません。**バックアップには期限削除前のコメントが残る可能性**があります。バックアップはアプリの自動削除対象外なので、保存先を記録し、期限切れコメントを含む古いバックアップは利用者が安全に破棄または新しいものへ差し替えます。初期版の自動復元CLIはなく、手動復元時はコメント期限と派生SRTの整合を再確認するまで運用を再開しません。
-14. アップデートは `git pull` のあと `uv sync --locked` です。スキーマは起動時にマイグレーションされます。
-15. 画面ロック中とディスプレイ OFF 中は処理を続ける前提です。スリープと休止では止まります。この差の実測は未検証です。
-16. Windows サインイン後の起動は `scripts/start_windows.ps1` を見ます。`-Register` を付けるとタスク スケジューラを変更します。既定では登録しません。WSL 内の再起動例は `scripts/live-rec-lab.service` です。systemd だけでは WSL 自体は常時起動しません。
-17. 障害の要約は「システム状態」で確認します。確定UI仕様の「ログ」画面は時刻・重要度・出力元で絞り込む設計ですが、2026-11-23の試行記録では未実装です。ファイル確認手順は [切り分け](TROUBLESHOOTING.md) を参照してください。
-18. 初期実装の受け入れではコメント保存期限によるSQLiteコメントとSRTの削除整合、論理削除済み配信者の再登録、ファイル名衝突時の非上書き、SRT版数競合の復旧も確認します。主要7画面・必要な下位ビューを実ブラウザで表示・操作し、1024／1280／1440pxを確認します。実施できなければ「未検証」と記録し、完成済みとは扱いません。
+6. コンソールに表示される `http://127.0.0.1:<port>` をWindowsのブラウザで開きます。同じ環境と作業ディレクトリで `uv run --locked live-rec-lab status`、`uv run --locked live-rec-lab url` を使えます。
+7. 「設定」で実効保存先と状態を確認し、「配信者一覧」で利用条件と権限を確認した配信者を登録します。「ダッシュボード」で録画とコメント収集を個別に確認します。「録画履歴」のセッション詳細から保存・欠損・字幕・コメントへ移動できます。
+8. 停止は `uv run --locked live-rec-lab stop` または起動シェルで Ctrl+C。停止処理が終わるまで待ちます。強制停止の次回起動では未確定ファイルと台帳を照合します。
+
+Windowsから接続できない場合は [障害対応](TROUBLESHOOTING.md) を参照してください。画面ロックとディスプレイOFFは処理継続を想定し、スリープと休止は中断を伴います。実機での検証範囲は [制限](LIMITATIONS.md) に記載しています。
+
+## バックアップと手動復元
+
+```bash
+uv run --locked live-rec-lab backup "$HOME/live-rec-lab-backup-$(date +%F).sqlite3"
+```
+
+CLIはSQLite Online Backupを使い、一貫したスナップショットを新規ファイルに保存します。既存の宛先を指定した場合は別名を選んでください。旧スナップショットには保存期限前のコメント本文や投稿者情報が含まれます。保管場所を記録し、不要になったバックアップを安全に破棄するか期限処理後の新しいバックアップに差し替えてください。
+
+手動復元時はアプリを停止し、現在のDBを先にバックアップします。現在適用しているコメント保存期限と録画ルートも控えます。対象DBと対応ファイルを確認し、停止中にスナップショットをLinux側の `app.sqlite3` へ復元します。古いDBに属するWAL・SHMを混在させないでください。
+
+復元DBにはバックアップ当時の設定が入っています。最初は監視を停止した状態で起動し、「設定」で現在のコメント保存期限と録画ルートを再設定します。
+
+```bash
+LIVE_REC_LAB_DISABLE_SCHEDULER=1 uv run --locked live-rec-lab start
+```
+
+設定を保存後、停止して同じ方法で再起動すると、監視を止めたまま起動時の期限照合が走ります。「システム状態」で削除・復元の照合状態を見て、対象セッションのコメント／管理SRTが保存期限どおりになったことを確認してください。照合が完了したら停止し、環境変数を付けずに通常起動します。
+
+## Windowsサインイン後の起動
+
+PowerShellでリポジトリの `scripts/start_windows.ps1` を起動し、最初にプレビューを確認します。WSLディストリビューション名、WSL内のリポジトリパス、uvへのパスは実環境に合わせます。
+
+```powershell
+.\scripts\start_windows.ps1 -Distro Ubuntu-24.04 -Repo '~/projects/live-rec-lab' -Uv '~/.local/bin/uv' -InstanceName personal
+```
+
+同じ引数に `-Register` を付けるとサインイン時の起動タスク `LiveRecorder-Lab-personal` を登録します。同名のタスクがある場合は停止します。WSLのユーザーsystemdで管理する場合は `scripts/live-rec-lab.service` が設定例です。Windowsサインイン時にWSLを起動する構成と合わせて使用してください。
+
+更新時は手動バックアップと安全停止の後にソースを更新し、リポジトリで `uv sync --locked` を実行します。その後に `start` を実行し、移行結果と使用中のURLを確認してください。

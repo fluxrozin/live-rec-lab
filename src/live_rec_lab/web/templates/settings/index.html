@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% macro explanation(key) %}
+  {% if errors.get(key) %}<span class="error" id="{{ key }}-error">{{ errors[key] }}</span>{% endif %}
+{% endmacro %}
+{% macro input_field(key, label, help="", inputmode="text", name="") %}
+  <label for="{{ key }}">
+    <span id="{{ key }}-label">{{ label }}</span>
+    <input id="{{ key }}" name="{{ name or key }}" value="{{ form[key] }}" inputmode="{{ inputmode }}"
+      aria-labelledby="{{ key }}-label"
+      {% if help or errors.get(key) %}aria-describedby="{{ key }}-help{% if errors.get(key) %} {{ key }}-error{% endif %}"{% endif %}
+      {% if errors.get(key) %}aria-invalid="true"{% endif %}>
+    <span class="muted" id="{{ key }}-help">{{ help }}</span>
+    {{ explanation(key) }}
+    {% if conflict and form[key]|string != settings[key]|string %}
+      <span class="muted">保存済み {{ settings[key] }}</span>
+    {% endif %}
+  </label>
+{% endmacro %}
+{% macro select_field(key, label, options) %}
+  <label for="{{ key }}">
+    <span id="{{ key }}-label">{{ label }}</span>
+    <select id="{{ key }}" name="{{ key }}" aria-labelledby="{{ key }}-label"
+      {% if errors.get(key) %}aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
+      {% if form[key]|string|lower not in options|map(attribute=0) %}
+        <option value="{{ form[key] }}" selected>{{ form[key] }}</option>
+      {% endif %}
+      {% for value, title in options %}
+        <option value="{{ value }}" {% if form[key]|string|lower == value %}selected{% endif %}>{{ title }}</option>
+      {% endfor %}
+    </select>
+    {{ explanation(key) }}
+    {% if conflict and key in settings and form[key]|string|lower != settings[key]|string|lower %}
+      <span class="muted">保存済み {{ settings[key] }}</span>
+    {% endif %}
+  </label>
+{% endmacro %}
+{% block content %}
+<form method="post" action="/settings" class="settings" data-settings data-dirty="{{ 'true' if dirty else 'false' }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="revision" value="{{ revision }}">
+  <input type="hidden" name="section" value="{{ section }}">
+  <nav class="settings-sections" aria-label="設定の分類" hidden>
+    {% for key, (label, fields) in sections.items() %}
+    <button type="button" data-settings-section="{{ key }}" aria-controls="settings-{{ key }}"
+      {% if key == section %}aria-current="true"{% endif %}>
+      {{ label }}{% if errors.keys()|select('in', fields)|list %}（要確認）{% endif %}
+    </button>
+    {% endfor %}
+  </nav>
+
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  {% if conflict %}<p>再度保存すると、編集中の値で設定を更新します。</p>{% endif %}
+
+  <fieldset id="settings-monitor" data-settings-panel="monitor">
+    <legend>監視</legend>
+    <p class="muted">監視頻度はサービス内の対象全体で共有します。変更は次の巡回から反映し、確認失敗による一時停止は対象ごとに適用されます。</p>
+    {{ input_field("monitor_per_minute_tiktok", "TikTok LIVE（回／分）",
+      "初期値 10、0 より大きく 10 以下。上限は固定です。", "decimal") }}
+    {{ input_field("monitor_per_minute_twitcasting", "ツイキャス（回／分）",
+      "初期値 10、0 より大きく 60 以下。上限は固定です。", "decimal") }}
+    <p class="muted">
+      実効頻度は外部サービスの制限やコメント取得の優先により設定値を下回ることがあります。
+      {% if gate_remaining is not none %}
+        ツイキャス API残枠 {{ gate_remaining }}{% if monitor_paused %}。監視を一時停止中{% endif %}。
+      {% else %}ツイキャスの API 残枠は未取得です。{% endif %}
+    </p>
+  </fieldset>
+
+  <fieldset id="settings-recording" data-settings-panel="recording">
+    <legend>録画・保存</legend>
+    {{ input_field("max_parallel_recordings", "同時録画上限（件）", "1〜8。次の録画開始時から反映します。", "numeric") }}
+    {{ select_field("recording_quality", "録画品質", [("best", "最高"), ("worst", "最低")]) }}
+    {{ select_field("tiktok_engine_first", "TikTok 録画エンジンの優先順位",
+      [("streamlink", "Streamlink → yt-dlp"), ("yt-dlp", "yt-dlp → Streamlink")]) }}
+    <p class="muted">品質とエンジンの優先順位は新たに開始する録画に適用します。</p>
+    {{ input_field("recording_root", "Windows 側の保存先", "WSL から見た絶対パス。例 /mnt/d/live-rec-lab/recordings。次の録画開始時から反映します。") }}
+    <p class="muted">保存済みの保存先の状態 {{ recording_root_status }}</p>
+    {{ input_field("min_free_bytes", "最低空き容量（バイト）", "0 以上。次の録画開始時に確認します。", "numeric") }}
+    {{ input_field("max_recording_bytes", "保存容量上限（バイト）",
+      "0 は無制限です。確定済み動画の合計が上限に達したら新規録画を待ちます。自動削除が有効な場合は古い確定済みファイルから整理します。", "numeric") }}
+    {{ select_field("auto_delete_recordings", "動画の自動削除", [("true", "有効"), ("false", "無効")]) }}
+    {{ input_field("retention_days", "動画保存期限（日）",
+      "0は日数による削除なし。自動削除で整理する対象は確定動画と字幕です。", "numeric") }}
+    <p class="muted">保存済みの自動削除 {{ "有効" if settings.auto_delete_recordings else "無効" }}</p>
+  </fieldset>
+
+  <fieldset id="settings-comments" data-settings-panel="comments">
+    <legend>コメント・SRT</legend>
+    {{ select_field("comments_enabled", "コメント収集", [("true", "有効"), ("false", "無効")]) }}
+    <p class="muted">次の巡回から反映します。有効時は配信者ごとのコメント収集設定に従います。</p>
+    {{ input_field("srt_display_seconds", "字幕の表示秒数",
+      "1〜30 秒。今後生成する SRT に反映します。", "decimal") }}
+    {{ input_field("comment_retention_days", "コメント保存期限（日）",
+      "0は無期限。期限を過ぎた配信のコメントと管理字幕は削除されます。動画と配信履歴は保持します。", "numeric") }}
+    <details><summary>コメント期限削除とバックアップ</summary>
+      <p>稼働中のDBと管理字幕から削除した内容は、通常の操作では復元できません。手動バックアップには期限切れコメントが残るため、古いものは安全に破棄するか新しいものに差し替えてください。</p>
+    </details>
+  </fieldset>
+
+  <fieldset id="settings-display" data-settings-panel="display">
+    <legend>表示</legend>
+    {{ input_field("timezone", "表示タイムゾーン", "IANA 形式。初期値 Asia/Tokyo。", name="timezone_name") }}
+    {{ select_field("font", "フォント", [("windows", "Windows標準"), ("noto", "Noto Sans JP")]) }}
+    <p class="muted">保存済みのフォント {{ "Noto Sans JP" if settings.font == "noto" else "Windows標準" }}</p>
+    <p class="preview" id="settings-font-preview" data-font-preview="{{ form.font }}">プレビュー 録画履歴 あア亜 LiveRecorder 0123 <time>2026-11-23 21:05:30</time></p>
+  </fieldset>
+
+  <fieldset id="settings-advanced" data-settings-panel="advanced">
+    <legend>詳細設定</legend>
+    {{ select_field("log_level", "ログレベル", log_levels) }}
+    <p class="muted">今後出力するアプリケーションの詳細ログに反映します。</p>
+    {{ select_field("port_mode", "Web ポートの割り当て", [("auto", "自動割り当て"), ("fixed", "固定")]) }}
+    {{ input_field("web_port", "固定 Web ポート", "固定時は 1〜65535。割り当ての変更にはアプリの再起動が必要です。", "numeric") }}
+    <p class="muted">稼働中 {{ active_port_mode }}{% if bound_port %}（{{ bound_port }}）{% else %}（ポート情報なし）{% endif %}</p>
+    {% if restart_needed %}<p role="status">Web ポートは保存済み・再起動後に反映</p>{% endif %}
+    <p class="muted">ツイキャス API {{ "設定済み" if twitcasting_configured else "未設定" }} ／ 署名 API {{ "設定済み" if sign_api_configured else "未設定" }}（読み取り専用）</p>
+  </fieldset>
+
+  <div class="settings-actions">
+    <button type="submit">変更を保存</button>
+    <a href="/settings?section={{ section }}" data-settings-cancel>編集を取り消す</a>
+    <span class="muted" role="status" data-settings-status>
+      {% if dirty %}未保存の変更があります{% elif saved and restart_needed %}保存済み・Web ポートは再起動後に反映{% elif saved %}保存しました{% else %}保存済み{% endif %}
+    </span>
+  </div>
+</form>
+{% endblock %}

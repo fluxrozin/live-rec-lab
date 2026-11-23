@@ -4,20 +4,20 @@ LiveRecorder は、Windows 11 上の WSL2 で動かす個人用のライブ配�
 
 録画ファイルとSRTは Windows 側の指定ドライブに保存します。エクスプローラーから保存先を開き、外部の動画プレイヤーで利用します。**Web管理画面・APIから動画やSRTのダウンロードは提供しません。** コメントは画面で検索でき、確定した録画セグメントごとにコメント収集の確定状態を踏まえて SRT を生成・再同期します。
 
-**現状は実装前のスターターキットです。** 本書は `requirements.md` と `docs/UI_UX.md` に基づく**完成後の予定動作**を記します。ここに登場するCLI、管理画面、スクリプトは未実装のものが含まれます。実装開始時は `docs/prompts/master.md` を参照し、実装・検証が進んだ段階で本書も更新してください。
-
 ## 起動して画面を開く
 
-LiveRecorder は WSL2（Ubuntu 24.04 LTS を基本）の中で、Python 3.12 のプロセスとして動きます。
+Windows 11＋WSL2 Ubuntu 24.04で、Python 3.12、uv、FFmpegを用意し、リポジトリのルートで起動します。
 
-1. WSL2 で LiveRecorder を起動する。CLI には `start`、`status`、`url`、`backup` を用意する。
-2. コンソールに出る URL を、Windows のブラウザで開く。同じ URL は `~/.local/state/live-rec-lab/runtime/endpoint.json` にも残る。`url` でも確認できる。
-3. ポートは空いている番号を自動で割り当てる。固定ポートは設定で選べる。
-4. ログインなしで開く。初期状態の待ち受けは `127.0.0.1` だけで、自分の PC から使う。
+```bash
+uv sync --locked
+uv run --locked live-rec-lab start
+```
 
-管理画面からは録画の削除や設定変更ができる。LAN やインターネットには出さない。
+出力されたループバックURLをブラウザで開きます。URLは `uv run --locked live-rec-lab url`、プロセスの状態は `status` でも確認できます。同じ環境で `uv run --locked live-rec-lab stop` を実行すると安全停止します。
 
-Windows の画面ロック中とディスプレイ OFF 中は録画を続ける。スリープと休止では処理が止まる。Windows へサインインしたあとの自動起動と、再起動後の監視再開を前提にする。
+録画を有効にする前に、DBに保存済みの録画先と既存アプリ／試作の実効保存先を照合してください。[初回導入とサインイン時の起動](docs/INSTALL_WSL2.md)・[設定](docs/CONFIGURATION.md)
+
+実配信とWindowsホスト固有の項目は [検証範囲](docs/LIMITATIONS.md) を参照してください。
 
 ## 配信者を登録する
 
@@ -39,7 +39,7 @@ Windows の画面ロック中とディスプレイ OFF 中は録画を続ける�
 - 配信中、録画中、コメント収集中は別の状態として表示する。取得できない状態を「オフライン」や「0 件」にはしない。
 - 録画は Windows 側の保存先へ直接書く。試作専用の例は `D:\live-rec-lab\recordings`（WSL2 からは `/mnt/d/live-rec-lab/recordings`）。ドライブは設定で変えられる。
 - フォルダは配信者 ID、その下は日付。ファイル名で TikTok とツイキャスを区別する。
-- コメントの正本は SQLite に残る。録画セグメントが確定すると、同じフォルダに同名の SRT を 1 つ作る。コメントの書き出し形式は SRT だけ。
+- コメントの正本は SQLite に残る。録画セグメントが確定すると、同じフォルダに同名の SRT を 1 つ作る。元のコメントはSQLiteで検索できます。
 
 ## 記録を探す
 
@@ -78,7 +78,7 @@ Windows の画面ロック中とディスプレイ OFF 中は録画を続ける�
 | `~/.local/state/live-rec-lab/logs`     | ログ                         |
 | `/mnt/d/live-rec-lab/recordings`（試作専用例） | 動画セグメントと対応する SRT |
 
-SQLite の手動バックアップは `backup` で行う。動いているデータベースファイルを、そのままコピーしない。
+SQLiteの手動バックアップは `uv run --locked live-rec-lab backup DEST` を使います。旧バックアップには期限削除前のコメントが残る場合があります。
 
 ## 関連文書
 
@@ -86,5 +86,6 @@ SQLite の手動バックアップは `backup` で行う。動いているデー
 - 画面の構成と文言の正本は [docs/UI_UX.md](docs/UI_UX.md)
 - 実装を進めるための指示は [docs/prompts/master.md](docs/prompts/master.md)
 - 設計の横断整理は [docs/design/README.md](docs/design/README.md)
-- 実装・運用の補助資料は [構成](docs/ARCHITECTURE.md)・[設定](docs/CONFIGURATION.md)・[WSL2導入](docs/INSTALL_WSL2.md)・[障害対応](docs/TROUBLESHOOTING.md)・[制限と未検証](docs/LIMITATIONS.md)。実装時に読み、実際のコードに合わせて更新してください。
+- 実装・運用の補助資料は [構成](docs/ARCHITECTURE.md)・[設定](docs/CONFIGURATION.md)・[WSL2導入](docs/INSTALL_WSL2.md)・[障害対応](docs/TROUBLESHOOTING.md)・[制限と未検証](docs/LIMITATIONS.md)。
+- 受け入れ条件の状況は [要件追跡表](specs/001-initial-live-recorder/traceability.md)
 - `.env.example` は認証情報の**名前だけ**を示すテンプレートです。値を記入する `.env` はGit管理外です。

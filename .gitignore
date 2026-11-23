@@ -27,3 +27,5 @@ wheels/
 logs/
 recordings/
 runtime/
+!/src/live_rec_lab/web/templates/logs/
+!/src/live_rec_lab/web/templates/recordings/
