@@ -87,15 +87,15 @@ def add_event(
 ) -> None:
     detail = redact(message)
     safe = detail
-    meta = None
+    safe_metadata = None
     if metadata:
         from live_rec_lab.ops.logging_config import redact_fields
 
-        meta = json.dumps(redact_fields(metadata), ensure_ascii=False)
+        safe_metadata = redact_fields(metadata)
     log.log(
         {"error": logging.ERROR, "warning": logging.WARNING}.get(severity, logging.INFO),
         detail,
-        extra={"event": event_type, "stream_session_id": stream_session_id, **{
+        extra={"event": event_type, "stream_session_id": stream_session_id, "metadata": safe_metadata, **{
             key: metadata[key] for key in ("correlation_id", "streamer_id", "job_id", "service")
             if metadata and key in metadata
         }},
@@ -106,7 +106,7 @@ def add_event(
             severity=severity,
             stream_session_id=stream_session_id,
             message=safe or "障害",
-            metadata_json=meta,
+            metadata_json=json.dumps(safe_metadata, ensure_ascii=False) if safe_metadata else None,
             correlation_id=metadata.get("correlation_id") if metadata else None,
             created_at=utcnow(),
         )

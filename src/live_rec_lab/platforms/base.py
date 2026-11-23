@@ -46,6 +46,7 @@ class Snapshot:
     ended_at: datetime | None = None
     retry_at: float | None = field(default=None, compare=False)
     paused: bool = field(default=False, compare=False)
+    diagnostics: dict[str, str | int] = field(default_factory=dict, compare=False)
 
 
 @dataclass

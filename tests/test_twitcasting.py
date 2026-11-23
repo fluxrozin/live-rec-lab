@@ -1,7 +1,10 @@
 import asyncio
+import json
+import logging
 
 import httpx
 
+from live_rec_lab.ops.logging_config import JsonFormatter
 from live_rec_lab.platforms.twitcasting import TwitCastingAdapter
 
 
@@ -182,11 +185,26 @@ def test_official_app_quota_recovers_when_reset_expires(monkeypatch):
     result = asyncio.run(adapter.check("caster"))
     assert result.detail == "rate_limit"
     assert result.retry_at == 1010
-    assert asyncio.run(adapter.comments("caster", "99", None)).error == "rate_limit"
+    assert asyncio.run(adapter.comments("caster", "99", None)).error == "rate_limit_wait"
     now[0] = 1011
     assert not asyncio.run(adapter.comments("caster", "99", None)).error
     asyncio.run(adapter.client.aclose())
     assert len(requests) == 2
+
+
+def test_comment_api_rejection_first_records_the_upstream_response(caplog):
+    adapter = _adapter(lambda _request: httpx.Response(429, headers={"Retry-After": "15"}))
+    with caplog.at_level(logging.WARNING, logger="live_rec_lab.platforms.twitcasting"):
+        result = asyncio.run(adapter.comments("caster", "99", None))
+    asyncio.run(adapter.client.aclose())
+
+    assert result.error == "rate_limit"
+    (record,) = caplog.records
+    line = json.loads(JsonFormatter().format(record))
+    assert line["service"] == "twitcasting"
+    assert line["metadata"]["api_endpoint"] == "comments"
+    assert line["metadata"]["http_status"] == 429
+    assert line["metadata"]["retry_at"] == result.retry_at
 
 
 def test_comment_pagination_retrieves_more_than_one_incremental_page():

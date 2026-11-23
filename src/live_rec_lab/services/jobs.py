@@ -290,9 +290,20 @@ class Coordinator:
         if detail:
             if snap.retry_at is not None:
                 metadata["retry_at"] = snap.retry_at
+            message = detail
+            if snap.diagnostics:
+                metadata.update(snap.diagnostics, code=detail)
+                if detail == "rate_limit":
+                    message = f"ツイキャスAPIの利用上限に到達しました（HTTP {snap.diagnostics['http_status']}）"
+                elif detail == "rate_limit_wait":
+                    message = (
+                        "LiveRecorderがコメント収集用のAPI残枠を確保するため監視を待機しました"
+                        if snap.diagnostics.get("rate_remaining")
+                        else "API残枠が尽きたため、LiveRecorderは監視リクエストの送信を見送りました"
+                    )
             add_event(
                 db, "monitor_detail", "error" if snap.status == "ERROR" else "warning",
-                f"{streamer.platform} / {streamer.platform_user_id}: {detail}",
+                f"{streamer.platform} / {streamer.platform_user_id}: {message}",
                 metadata=metadata,
             )
 

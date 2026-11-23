@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
 from urllib.parse import quote
@@ -16,6 +17,9 @@ TWITCASTING_USER_AGENT = "LiveRecorder (public TwitCasting HLS)"
 TWITCASTING_REFERER = "https://twitcasting.tv/"
 _PAGE_LIMIT = 50
 _CATCH_UP_PAGES = 5
+_RATE_LIMIT_ERRORS = {"rate_limit", "rate_limit_wait"}
+
+log = logging.getLogger(__name__)
 
 
 def _epoch(value: object) -> datetime | None:
@@ -42,9 +46,9 @@ def _error_code(response: httpx.Response) -> int | None:
     return code if type(code) is int else None
 
 
-def _remaining(response: httpx.Response) -> int | None:
-    raw = response.headers.get("X-RateLimit-Remaining", "")
-    return int(raw) if raw.isascii() and raw.isdecimal() else None
+def _rate_header(response: httpx.Response, header: str) -> int | None:
+    raw = response.headers.get(header, "")
+    return int(raw) if raw.isascii() and raw.isdecimal() and len(raw) <= 18 else None
 
 
 def _positive_id(value: object) -> str | None:
@@ -75,13 +79,35 @@ class TwitCastingAdapter:
         if self.owns_client:
             await self.client.aclose()
 
+    def _rate_limit_diagnostics(
+        self, response: httpx.Response | None, endpoint: str, priority: str,
+    ) -> dict[str, str | int]:
+        metadata: dict[str, str | int] = {"api_endpoint": endpoint, "priority": priority}
+        if response is None:
+            remaining = self.gate.remaining
+            if remaining is not None:
+                metadata["rate_remaining"] = remaining
+            return metadata
+        metadata["http_status"] = response.status_code
+        if response.status_code == 403:
+            metadata["api_error_code"] = 2000
+        for key, header in (
+            ("rate_remaining", "X-RateLimit-Remaining"),
+            ("rate_limit", "X-RateLimit-Limit"),
+            ("rate_reset_at", "X-RateLimit-Reset"),
+        ):
+            value = _rate_header(response, header)
+            if value is not None:
+                metadata[key] = value
+        return metadata
+
     async def _request(
         self, path: str, *, priority: str, params: dict[str, str | int] | None = None,
     ) -> tuple[httpx.Response | None, str]:
         if not self.configured():
             return None, "credentials_missing"
         if not self.gate.acquire(priority):
-            return None, "rate_limit"
+            return None, "rate_limit_wait"
         try:
             response = await self.client.get(
                 f"{API_ROOT}{path}",
@@ -95,8 +121,16 @@ class TwitCastingAdapter:
         reset = retry_timestamp(response.headers, time.time())
         if response.status_code == 429 or (response.status_code == 403 and _error_code(response) == 2000):
             self.gate.note(0, reset)
+            if priority != "monitor":
+                log.warning(
+                    "ツイキャスAPIの利用上限に到達しました（HTTP %s）", response.status_code,
+                    extra={"event": "twitcasting_api_rate_limit", "service": "twitcasting", "metadata": {
+                        **self._rate_limit_diagnostics(response, path.rsplit("/", 1)[-1], priority),
+                        "code": "rate_limit", "retry_at": self.gate.reset_at,
+                    }},
+                )
             return response, "rate_limit"
-        self.gate.note(_remaining(response), reset)
+        self.gate.note(_rate_header(response, "X-RateLimit-Remaining"), reset)
         if response.status_code in {401, 403}:
             return response, "authorization_denied"
         if response.status_code != 200:
@@ -108,8 +142,13 @@ class TwitCastingAdapter:
         if error:
             if response is not None and response.status_code == 404 and _error_code(response) == 404:
                 return Snapshot("OFFLINE")
+            if error in _RATE_LIMIT_ERRORS:
+                return Snapshot(
+                    "UNKNOWN", detail=error, retry_at=self.gate.reset_at,
+                    diagnostics=self._rate_limit_diagnostics(response, "current_live", priority),
+                )
             status = "ERROR" if error in {"authorization_denied", "credentials_missing"} else "UNKNOWN"
-            return Snapshot(status, detail=error, retry_at=self.gate.reset_at if error == "rate_limit" else None)
+            return Snapshot(status, detail=error)
         assert response is not None
         movie = _payload(response).get("movie")
         if not isinstance(movie, dict) or type(movie.get("is_live")) is not bool:
@@ -151,7 +190,7 @@ class TwitCastingAdapter:
             batch.rate_remaining = self.gate.remaining
             if error:
                 batch.error = error
-                batch.retry_at = self.gate.reset_at if error == "rate_limit" else None
+                batch.retry_at = self.gate.reset_at if error in _RATE_LIMIT_ERRORS else None
                 return batch
             assert response is not None
             payload = _payload(response)

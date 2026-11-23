@@ -1,4 +1,6 @@
 import asyncio
+import json
+import time
 from datetime import timedelta
 
 import httpx
@@ -8,6 +10,8 @@ from sqlalchemy import select
 from live_rec_lab.config import utcnow, validate_setting
 from live_rec_lab.db.models import SystemEvent
 from live_rec_lab.monitoring.scheduler import initial_last_check, personal_period
+from live_rec_lab.ops.log_reader import read_logs
+from live_rec_lab.ops.logging_config import configure_logging
 from live_rec_lab.platforms.base import Snapshot
 from live_rec_lab.platforms.tiktok import TikTokAdapter, check_failure_pauses, default_probe, room_snapshot
 from live_rec_lab.platforms.twitcasting import TwitCastingAdapter
@@ -230,6 +234,60 @@ def test_monitor_events_identify_the_platform_for_matching_accounts(db):
         select(SystemEvent.message).where(SystemEvent.event_type == "monitor_detail").order_by(SystemEvent.id)
     ).all()
     assert messages == ["tiktok / same: network_error", "twitcasting / same: network_error"]
+
+
+@pytest.mark.parametrize("status", [None, 403, 429], ids=["local", "twitcasting-403", "twitcasting-429"])
+def test_twitcasting_monitor_log_distinguishes_api_rejection_and_local_wait(db, status):
+    streamer = register_streamer(
+        db, platform="twitcasting", account="caster", display_name="", monitoring=True,
+        recording=False, comments=False,
+    )
+    streamer_id = streamer.id
+    db.commit()
+    requests = []
+    reset = int(time.time()) + 60
+
+    def send(request):
+        requests.append(request)
+        headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(reset), "X-RateLimit-Limit": "60"}
+        if status == 403:
+            return httpx.Response(403, headers=headers, json={"error": {"code": 2000, "message": "upstream text"}})
+        return httpx.Response(429, headers=headers, content=b"upstream text")
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+            adapter = TwitCastingAdapter("private-client-id", "private-client-secret", client=client)
+            coordinator = Coordinator(twitcasting=adapter)
+            configure_logging(coordinator.paths.log_dir)
+            if status is None:
+                adapter.gate.note(5, reset)
+            await coordinator.check_streamer(streamer_id, "twitcasting", "caster", 30, {})
+            return coordinator.paths.log_dir
+
+    log_dir = asyncio.run(run())
+    event = db.scalars(select(SystemEvent).where(SystemEvent.event_type == "monitor_detail")).one()
+    (entry,) = read_logs(log_dir, streamer_id=streamer_id).entries
+    assert entry.message == event.message
+    metadata = json.loads(event.metadata_json)
+    assert entry.metadata == metadata
+    assert metadata["retry_at"] == reset
+    assert metadata["api_endpoint"] == "current_live"
+    if status is None:
+        assert requests == []
+        assert "コメント収集用のAPI残枠を確保" in event.message
+        assert metadata["code"] == "rate_limit_wait"
+        assert metadata["rate_remaining"] == 5
+        assert "http_status" not in metadata
+    else:
+        assert len(requests) == 1
+        assert "ツイキャスAPIの利用上限に到達" in event.message
+        assert metadata["code"] == "rate_limit"
+        assert metadata["http_status"] == status
+        assert metadata["rate_remaining"] == 0
+        assert metadata["rate_limit"] == 60
+        assert metadata.get("api_error_code") == (2000 if status == 403 else None)
+    raw = (log_dir / "app.jsonl").read_text()
+    assert all(value not in raw for value in ("private-client-id", "private-client-secret", "upstream text"))
 
 
 @pytest.mark.parametrize("body", [b"", b"<html>invalid</html>"], ids=["empty", "html"])
