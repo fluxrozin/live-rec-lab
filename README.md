@@ -11,7 +11,7 @@ LiveRecorder は、Windows 11 上の WSL2 で動かす個人用のライブ配�
 LiveRecorder は WSL2（Ubuntu 24.04 LTS を基本）の中で、Python 3.12 のプロセスとして動きます。
 
 1. WSL2 で LiveRecorder を起動する。CLI には `start`、`status`、`url`、`backup` を用意する。
-2. コンソールに出る URL を、Windows のブラウザで開く。同じ URL は `~/.local/state/live-recorder/runtime/endpoint.json` にも残る。`url` でも確認できる。
+2. コンソールに出る URL を、Windows のブラウザで開く。同じ URL は `~/.local/state/live-rec-lab/runtime/endpoint.json` にも残る。`url` でも確認できる。
 3. ポートは空いている番号を自動で割り当てる。固定ポートは設定で選べる。
 4. ログインなしで開く。初期状態の待ち受けは `127.0.0.1` だけで、自分の PC から使う。
 
@@ -68,13 +68,13 @@ Windows の画面ロック中とディスプレイ OFF 中は録画を続ける�
 - 画面のフォント（Windows 標準、または Noto Sans JP）
 - Web のポート（自動割り当て、または固定）
 
-データベース、ログ、起動 URL は WSL2 の Linux 側に置く。録画動画と SRT だけを Windows のドライブに置く。
+データベース、ログ、起動 URL は WSL2 の Linux 側に置く。録画動画と SRT だけを Windows のドライブに置く。リポジトリ名は `live-rec-lab`、アプリケーション名は LiveRecorder である。実行時ディレクトリはリポジトリ名に合わせる。Windows の録画フォルダ例は、このアプリケーションの動画と SRT の保存先である。
 
 | 置き場所                               | 内容                         |
 | -------------------------------------- | ---------------------------- |
-| `~/.local/share/live-recorder/data`    | SQLite                       |
-| `~/.local/state/live-recorder/runtime` | 起動 URL とプロセスの状態    |
-| `~/.local/state/live-recorder/logs`    | ログ                         |
+| `~/.local/share/live-rec-lab/data`     | SQLite                       |
+| `~/.local/state/live-rec-lab/runtime`  | 起動 URL とプロセスの状態    |
+| `~/.local/state/live-rec-lab/logs`     | ログ                         |
 | `/mnt/d/LiveRecorder/recordings`（例） | 動画セグメントと対応する SRT |
 
 SQLite の手動バックアップは `backup` で行う。動いているデータベースファイルを、そのままコピーしない。
