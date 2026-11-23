@@ -1,7 +1,7 @@
 [project]
 name = "live-rec-lab"
 version = "0.1.0"
-description = "Add your description here"
+description = "Automatically record livestreams, capture live chat, and generate subtitles."
 readme = "README.md"
 authors = [
     { name = "fluxrozin", email = "fluxrozin@gmail.com" }
