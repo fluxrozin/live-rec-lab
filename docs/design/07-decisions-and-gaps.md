@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | GAP-01 | `requirements.md`はPython **3.12.x**を明示。一方 `.python-version` は `3.14`、`pyproject.toml`は `requires-python = ">=3.14"` | `.python-version` を `3.12`、`requires-python` を `>=3.12,<3.13` にした。`uv lock` は `requires-python = "==3.12.*"`、`uv sync --locked` と `uv run` は CPython 3.12.13 で通過した | 解消 |
 | GAP-02 | `requirements.md` §10.1.1.1 と実リポジトリは `src/live_rec_lab/`。ただし§10.1.1.2, §10.1.1.7等に `src/live_recorder/web/` が残る | §10.1.1.2 と §10.1.1.7 を `src/live_rec_lab/web/` に統一した | 解消 |
-| GAP-03 | `requirements.md` のDB・ログ・runtimeディレクトリは通常 `live-rec-lab`。一方 `README.md` に `live-recorder` が残る | 実行時ディレクトリはリポジトリ名 `live-rec-lab` に合わせ、`README.md` もこれに統一した。アプリケーション名は LiveRecorder。Windows の録画フォルダ例 `D:\LiveRecorder\recordings` はその動画と SRT の保存先であり、実行時ディレクトリとは別パス。`requirements.md` §10.1、`README.md`、開発憲法に記載した | 解消 |
+| GAP-03 | `requirements.md` のDB・ログ・runtimeディレクトリは通常 `live-rec-lab`。一方 `README.md` に `live-recorder` が残る | 実行時ディレクトリはリポジトリ名 `live-rec-lab` に合わせ、`README.md` もこれに統一した。アプリケーション名は LiveRecorder。Windows の録画フォルダ例は現行試作専用の `D:\live-rec-lab\recordings` へ統一し、既存アプリの `D:\LiveRecorder\recordings` と分離する。`requirements.md` §10.1、`README.md`、開発憲法に記載した | 解消 |
 | GAP-04 | `.specify/memory/constitution.md` はSpec Kitのテンプレートで、開発原則が未記入 | 要件と `AGENTS.md` に沿う開発憲法 v1.0.0 を制定した | 解消 |
 | GAP-05 | `docs/UI_UX.md` は**ライト系1テーマのみ**。後日2テーマを採用する場合は原本の変更が必要 | ライト系1テーマを採用する。2テーマ化は `requirements.md` と `docs/UI_UX.md` を先に改訂するまで行わない。原本は変更していない | 解消 |
 

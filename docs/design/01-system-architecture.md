@@ -15,7 +15,7 @@
 ```text
 Windows 11
   ├─ PC browser ── localhost ──┐
-  └─ recording volume (NTFS)  │   /mnt/<drive>/LiveRecorder/recordings/
+  └─ recording volume (NTFS)  │   /mnt/<drive>/live-rec-lab/recordings/
                                v
 WSL2 Ubuntu 24.04 LTS       FastAPI + Uvicorn (single process, 1 worker)
   ├─ Web UI (Jinja2/HTMX) ─────┤

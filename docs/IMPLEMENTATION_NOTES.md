@@ -9,7 +9,7 @@
 
 本書は、2026-11-23に提供された `live-rec-lab.zip` の `.specify/bugs/` 下にある**12件の不具合記録（assessment / fix / test の36文書）**、および `specs/001-initial-live-recorder/` と `.specify/memory/constitution.md` を基にした再利用用メモである。ZIPにはアプリケーションの**ソースコード本体、稼働中のSQLite DB、動画実体、原本のHTTP/HLS応答**は含まれていない。したがって、以下の「実配信で確認」は、**添付された検証記録がそう報告している**という意味であり、今回ソースや録画を再実行・独立検証したことを意味しない。
 
-文書間で競合する場合は `docs/prompts/master.md` に定める優先順位（`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様 → **本書**）に従う。本書の対策案には**その環境で成功した技法**と**まだ一般化できない仮説**が混在する。バイナリの絶対パス、閾値、バージョン、ライブラリの戻り値の形は、次回の実装環境で再検証する。
+文書間で競合する場合は `docs/prompts/master.md` に定める優先順位（`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様 → 5つの運用補助資料（`docs/ARCHITECTURE.md`、`CONFIGURATION.md`、`INSTALL_WSL2.md`、`TROUBLESHOOTING.md`、`LIMITATIONS.md`）→ **本書** → `README.md`）に従う。本書の対策案には**その環境で成功した技法**と**まだ一般化できない仮説**が混在する。バイナリの絶対パス、閾値、バージョン、ライブラリの戻り値の形は、次回の実装環境で再検証する。
 
 ### 根拠の強さ
 

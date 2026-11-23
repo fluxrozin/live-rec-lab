@@ -22,6 +22,11 @@
 - docs/UI_UX.md
 - docs/IMPLEMENTATION_NOTES.md
 - docs/design/ 以下の全資料
+- docs/ARCHITECTURE.md
+- docs/CONFIGURATION.md
+- docs/INSTALL_WSL2.md
+- docs/TROUBLESHOOTING.md
+- docs/LIMITATIONS.md
 - .specify/memory/constitution.md
 - .specify/ 以下の設定とWorkflow
 - .cursor/skills/speckit-\*/SKILL.md
@@ -34,13 +39,17 @@
 1. requirements.md：機能・非機能要件の正本
 2. docs/UI_UX.md：UI/UX仕様の正本
 3. .specify/memory/constitution.md：開発原則
-4. docs/design/：実装用の参考設計
-5. Feature仕様：上記を具体化した成果物
-6. docs/IMPLEMENTATION_NOTES.md：過去の実装試行に基づく経験知・検証記録（参考資料）
+4. docs/design/：実装用の参考設計（正本の抽出）
+5. Feature仕様：上記を具体化した成果物。上位資料からの逸脱は不可
+6. docs/ARCHITECTURE.md／CONFIGURATION.md／INSTALL_WSL2.md／TROUBLESHOOTING.md／LIMITATIONS.md：実装・設定・導入・障害対応の**補助資料**（現行版とは限らない）
+7. docs/IMPLEMENTATION_NOTES.md：過去の実装試行に基づく経験知・検証記録（参考資料）
+8. README.md：概要・利用入口（仕様の正本ではない）
 
 下位資料の矛盾では上位仕様を優先してください。Featureで具体化した設計を変更する必要がある場合は、上位資料に反しないことを確かめ、矛盾があれば上位文書から整合させてください。
 
 過去の実装試行で判明した再発しやすい落とし穴・検証結果は、`docs/IMPLEMENTATION_NOTES.md` に整理します。同文書は経験知の参考資料であり、`requirements.md` や `docs/UI_UX.md` を上書きする正本ではありません。個別試行に固有のFFmpegバージョン・パス・閾値は、そのまま製品要件として固定せず、現行環境で再検証してください。
+
+上記5つの補助資料も**実装前に必ず目を通し、該当タスクの実装・運用検証時に再参照**してください。構成、環境変数、起動・停止、障害復旧、既知の制限を把握する資料です。ただし過去の試作時点のAPI・コマンド・実装状況が混在するため、正本や実在するコード／CLIと照合し、未実装のコマンドを動作確認済みとして扱わないこと。矛盾があれば正本を優先し、原因と反映先を記録してください。完成前に5資料とREADMEを**実際のコード・テスト結果・導入手順**に合わせて更新し、当該試作での確認結果と今回の検証結果を混同しないでください。
 
 requirements.mdは確定済みです。
 要件を独自判断で簡略化、削除、変更しないでください。
@@ -57,17 +66,23 @@ requirements.mdは確定済みです。
 Feature名：
 initial-live-recorder
 
-**実行前のFeature固定ゲート：** 現在の作業ブランチ、`.specify/feature.json`（存在する場合）と `SPECIFY_FEATURE_DIRECTORY`（設定されている場合）の指す実際のFeatureディレクトリ、および既存の `specs/*-initial-live-recorder/` を照合してください。**Gitブランチの切り替えだけではSpec KitのアクティブFeatureが切り替わったと判断しない**こと。既存Featureがあれば番号・既存成果物を保ったまま再利用し、重複Featureを自動作成しないでください。指す先の不一致があればSkillの手順に従って同一Featureを明示的に選択・設定し、再確認してから着手してください。不一致を解消できないときは別Featureへ書き込まないでください。
+**実行前のGit安全ゲート：** `git branch --show-current` と `git status --short` でブランチと既存の変更を確認してください。`main` でのコード変更は**利用者がそのブランチでの実装を明示許可した場合のみ**行えます。許可がなければ実装を停止し、利用者が作業ブランチを選ぶまで待ってください。自動的なブランチ作成・切替・commit・push・merge・reset・clean・既存変更の破棄をしてはいけません。**Spec Kitの `before_specify` 等のフックもGit操作の可能性を調べ、許可のないブランチ変更を実行しないでください。** 意図しない既存変更を検出した場合はそのまま保護し、原因と影響を確認してください。
 
-以下の工程を順番に実行してください。
+**実行前のFeature固定ゲート：** `.specify/feature.json`、環境変数 `SPECIFY_FEATURE_DIRECTORY`（あれば優先）・`SPECIFY_FEATURE`（あれば確認）、実際の `specs/*-initial-live-recorder/` を照合します。ブランチ名はFeatureパスを決めません。**初回のスターターでは `specs/001-initial-live-recorder/` が未作成でも正常**であり、その場合は `.specify/feature.json` の `specs/001-initial-live-recorder` をブートストラップ先として明示的に使います。`speckit-specify` に同一 `SPECIFY_FEATURE_DIRECTORY` を渡し、別番号・別名のFeatureを自動生成させません。既存ディレクトリがある場合は番号・成果物を保って再利用します。環境変数と設定の不一致、複数候補、別Feature指定を自動的に都合よく解釈せず、確認・解消できるまで書き込みません。`specs/` の未作成のみを理由に重複Featureを生成しないでください。
 
-1. speckit-specify
+**再開判定と成果物保護：** 以下は固定の毎回実行リストではありません。初回は順に進め、再開時にはFeature内の `spec.md`、`plan.md`、`tasks.md`、`research.md`、`data-model.md`、`contracts/`、`traceability.md` と検証証跡を調べ、欠けている工程から再開してください。`speckit-specify` はテンプレートで `spec.md` を**上書き**するため、既存 `spec.md` がある場合は再実行禁止です。`plan`／`tasks` 等についてもSkillが既存成果物を書き直すか確認し、不要な再生成・完了済みタスクの初期化をしないでください。
+
+初回実行の工程：
+
+1. speckit-specify（`spec.md` 未作成の場合だけ）
 2. 必要に応じてspeckit-clarify
-3. speckit-plan
-4. speckit-tasks
-5. speckit-analyze（可能な場合はチェックリストも作成・照合）
-6. speckit-implement
-7. speckit-converge
+3. speckit-plan（既存 `plan.md` を不用意に上書きしない）
+4. speckit-tasks（既存 `tasks.md` を不用意に上書きしない）
+5. speckit-analyze（**読取専用**。必要ならチェックリスト作成・照合）
+6. 重大な検出事項があれば、**Skill外の別修正工程**で承認を得て成果物を修正→speckit-analyzeを再実行
+7. 原本からの独立追跡監査（§2・§8参照）
+8. speckit-implement
+9. speckit-converge（**`tasks.md` への追記だけを許す**）→必要なら追加タスク実装・再検証
 
 各Skillの実行手順は、
 .cursor/skills/speckit-\*/SKILL.md
@@ -76,21 +91,20 @@ initial-live-recorder
 CursorがSkillを直接呼び出せる場合は使用してください。
 直接呼び出せない場合はSKILL.mdの手順を実行してください。
 
-specs/NNN-initial-live-recorder/（`NNN` は事前確認した既存Feature番号を使用）
+specs/NNN-initial-live-recorder/（`NNN` は既存Feature番号、初回未作成なら固定値 `001` を使用）
 以下に必要な仕様成果物を作成してください。
 
 spec.md、plan.md、tasks.mdは必須です。
 research.mdは外部API実証結果、**data-model.mdはセッション横断採番・衝突時の固定識別子・複合外部キー・論理削除再有効化・コメント期限削除／削除復旧、contracts/は設定ON/OFF・状態遷移・期限削除・SRT版数競合・削除操作の入出力契約**の確定に必要なので初期Featureで作成してください。その他の成果物は必要に応じて作成してください。
 
 正本の要件とSpec Kit成果物の対応関係を明確にしてください。
-要件・受け入れ条件の追跡可能性を維持し、`RISK-01`〜`RISK-15` を該当する `tasks.md` の検証タスクと結び付けてください。**`requirements.md` §17の固定テストID `TC-xxx` と§23の受け入れID `AC-xxx` を変更・再採番しない**こと。初期Feature内に**要件追跡表 `traceability.md`** を作り、少なくとも「原本の節番号／`AC`／関連する `TC`／Spec見出しまたは要件ID／`tasks.md` タスクID／テストコード・実機検証証跡／結果（実機検証済み・ローカル検証済み・未検証・実装不可）」を記録してください。各 `AC` に最低1件の対応を求め、未対応・未検証を空欄にせず、その理由を記します。既存 `TC` で覆えない `AC` は原本§17に新規 `TC` を追記してから成果物を更新し、**既存IDを振り直しません**。P0/P1横断条件（状態遷移、採番、保存先分離、配信者フォルダ名衝突、ファイル名衝突、配信者再有効化、コメント期限削除と旧バックアップ、SRT版数、ログ読取・閲覧時秘匿）には単体・統合・障害テストを必ず設定してください。
+要件・受け入れ条件の追跡可能性を維持し、`RISK-01`〜`RISK-15` を該当する `tasks.md` の検証タスクと結び付けてください。**`requirements.md` §17の固定テストID `TC-xxx` と§23の受け入れID `AC-xxx` を変更・再採番しない**こと。初期Feature内に**要件追跡表 `traceability.md`** を作り、少なくとも「原本の節番号／`AC`／関連する `TC`／Spec見出しまたは要件ID／`tasks.md` タスクID／テストコード・実機検証証跡／結果（実機検証済み・ローカル検証済み・未検証・実装不可）」を記録してください。各 `AC` に最低1件の対応を求め、未対応・未検証を空欄にせず、その理由を記します。既存 `TC` で覆えない `AC` は、まずFeature内に追加テスト案・識別子と原本への追記提案を記録してください。**確定済み `requirements.md` を無承認で変更せず**、原本への新規 `TC` 追記が必要なら利用者の承認後に追加し、既存IDを振り直しません。P0/P1横断条件（状態遷移、採番、保存先分離、配信者フォルダ名衝突、ファイル名衝突、配信者再有効化、コメント期限削除と旧バックアップ、SRT版数、ログ読取・閲覧時秘匿）には単体・統合・障害テストを必ず設定してください。
 
 重要：
-`speckit-analyze` では **Spec間の照合に加え、`requirements.md` の各節と§23の全 `AC` が `traceability.md` でSpec／タスク／テストへ展開されているか**を原本から照合してください。重大な仕様矛盾、要件漏れ、依存関係の問題が見つかった場合は、該当する `spec.md`／`plan.md`／`tasks.md`／`traceability.md` を修正して再分析し、解消してから `speckit-implement` に進んでください。**実装前ゲート：** 設定変更時のジョブ停止・復帰と手動停止優先、`ENDING`／終了未確認の収束、同一セッションの番号予約とクラッシュ復旧、削除2方式と障害復旧、コメント期限削除（SRT先行・SQLite消去、生成／書込排他）と再登録、ファイル名衝突、SRT版数／公開競合・再同期、ログの安全な段階的読取について、遷移表・DDL／制約・API契約・テストが互いに整合することを確認します。RISK-01〜04の外部依存は未実証のAPIを保証せず、実施できなければ未検証・制限付きと明示します。
+`speckit-analyze` の実行中は**一切のファイルを書き換えません**。同Skillの分析結果と別に、`requirements.md` の全節・§17の全 `TC`・§23の全 `AC` から `traceability.md` → Spec／タスク／テストへの転記漏れを**原本起点で独立監査**してください（この監査も最初は読取専用）。重大な仕様矛盾・要件漏れ・依存関係の問題を発見した場合は、分析結果を報告し、Skillが求める**利用者の明示的承認**を得てから、Skill外で `spec.md`／`plan.md`／`tasks.md`／`traceability.md` を修正し、再分析・再監査で解消を確かめてから `speckit-implement` に進んでください。承認がなければ当該修正をせず、独立して実施可能な範囲だけ進めるか停止して未解決を報告します。**実装前ゲート：** 設定変更時のジョブ停止・復帰と手動停止優先、`ENDING`／終了未確認の収束、同一セッションの番号予約とクラッシュ復旧、削除2方式と障害復旧、コメント期限削除（SRT先行・SQLite消去、生成／書込排他）と再登録、ファイル名衝突、SRT版数／公開競合・再同期、ログの安全な段階的読取について、遷移表・DDL／制約・API契約・テストが互いに整合することを確認します。RISK-01〜04の外部依存は未実証のAPIを保証せず、実施できなければ未検証・制限付きと明示します。
 それ以外は各Skillの完了後、利用者の追加入力を待たず、次の工程へ進んでください。
 
-ただし、Skillの必須ゲート、安全確認、
-利用者の明示的な判断が必要な事項は省略しないでください。
+ただし、Skillの読取専用／追記専用契約、チェックリスト・安全確認・利用者承認などの必須ゲートを省略しないでください。承認なしで通過できると装ったり、Skill内の禁止操作を別名の呼び出しで実行したりしないこと。必要な人手判断を経ても、許可済みの独立タスクは続行可能です。
 
 ## 3. 実装戦略
 
@@ -166,7 +180,7 @@ Phase 7：品質確認
 - 障害テスト
 - UI動作・表示検証
 - 要件の受け入れ判定
-- 導入・運用ドキュメント
+- 導入・運用ドキュメント（既存の5補助資料とREADMEの整合更新を含む）
 
 ただし、詳細はrequirements.mdの§19および§23を正とします。
 
@@ -266,13 +280,14 @@ tasks.md生成後、実装を開始してください。
 必要に応じて調査、局所的な試作、テストを実施し、
 検証結果をFeatureのresearch.md等へ残してください。
 
-## 8. 実装完了後のConverge
+## 8. 実装完了後のConvergeと独立した原本監査
 
-最初の全タスク実装が終了したら、
-speckit-convergeを実行してください。
+最初の全タスク実装が終了したら、**2種類の検査を別工程**として行ってください。
 
-**元の `requirements.md` 全節・§17の `TC`・§23の `AC` を起点に** `traceability.md`、spec.md、plan.md、tasks.md、テストコードと実際の実装／実行結果を照合し、
-次の問題を検出してください。**Feature成果物の内部整合だけで合格とせず、原本からの転記漏れを独立に確認**してください。
+1. **原本起点の独立監査（読取専用）**：`requirements.md` の全節・§17の全 `TC`・§23の全 `AC` と、`docs/UI_UX.md` の主要7画面・受け入れチェック項目を原本から抽出し、`traceability.md`、`spec.md`、`plan.md`、`tasks.md`、テストコード、実装、および実行結果に逆引き照合します。Feature内部だけで検査を完結させず、未転記・未対応・未検証を明記してください。
+2. **speckit-converge**：同Skillは原則 `spec.md`／`plan.md`／`tasks.md` を意図の基準として実装を評価します。**書込先は `tasks.md` のConvergence節への追記のみ**です。既存のタスクを書き換えたり、Skill内でコード・Spec・Planを変更してはいけません。
+
+両検査の結果を統合して次の問題を検出してください。原本監査でのみ見つかった漏れも別修正工程（必要な承認後）で対応し、Spec KitのConvergeが検出しなかったからといって合格としないこと。
 
 - 未実装
 - 部分実装
@@ -282,10 +297,7 @@ speckit-convergeを実行してください。
 - 動作しない機能
 - 要求されていない余分な実装
 
-Convergeによってタスクが追加された場合は、
-speckit-implementで追加タスクを実装してください。
-
-その後、再度Convergeを実行してください。
+Convergeで追記されたタスクは `speckit-implement` で実装してください。原本監査の検出事項で `spec.md`／`plan.md`／既存 `tasks.md` の修正が必要な場合は、**Convergeの外で**必要な承認を得て整合させ、再分析・独立監査してください。再実装後に2種類の検査を繰り返します。
 
 最大3サイクル繰り返してください。3サイクル後も要件未達や重大な不整合が残る場合は、完了扱いせず未解決として報告してください。
 
@@ -294,10 +306,12 @@ speckit-implementで追加タスクを実装してください。
 
 ## 9. Gitと作業範囲
 
-現在の作業ブランチで実装してください。
+**実装ブランチは作業開始前に利用者が選択したものに限ります。** `main` での変更には利用者の明示的な許可が必要です。ZIPに含まれる `.git/HEAD` が `main` を指す場合も、この制限は変わりません。
 
-- mainへ切り替えない
-- 既存コードを無断で破棄しない
+- mainへ無断で切り替えない・main上で無断変更しない
+- 指示なくブランチを作成・切替しない（Spec Kitフックを含む）
+- 既存の未コミット変更を含め、コード・文書を無断で破棄しない
+- `git reset --hard`・`git clean -fd` 等を無断で実行しない
 - 指示なくgit commitしない
 - git pushしない
 - mergeしない
@@ -316,6 +330,8 @@ requirements.md §23の固定 `AC` と§17の `TC` を含む受け入れ条件�
 - ローカル検証済み
 - 未検証
 - 実装不可
+
+実装・テストと同時に `README.md`、`docs/ARCHITECTURE.md`、`docs/CONFIGURATION.md`、`docs/INSTALL_WSL2.md`、`docs/TROUBLESHOOTING.md`、`docs/LIMITATIONS.md` の説明・画面数・ファイル経路・実在するCLI・現在の検証状況を照合し、矛盾があれば更新してください。正本に反する旧6画面・ファイルダウンロード・旧アプリ保存先の案内が残っていないこと、`.env.example` および説明中のスクリプト・CLI等が実際に存在することを確認します。存在しない機能を実装済みと記さず、未実装・未検証の区別を残します。
 
 最終報告には以下を示してください。
 

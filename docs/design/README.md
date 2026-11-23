@@ -6,7 +6,7 @@
 
 ## 文書の役割と優先順位
 
-文書間の優先順位は `docs/prompts/master.md` に一本化する。上位から **`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様（`specs/NNN-initial-live-recorder/`）→ `docs/IMPLEMENTATION_NOTES.md`**。本ディレクトリは正本から抽出した横断設計であり、Feature成果物（`spec.md`、`plan.md`、`tasks.md` と必要な `research.md`、`data-model.md`、`contracts/`）で具体化する。矛盾したら上位文書を変更・承認してから下位へ反映し、試作の経験知だけで正本を変更しない。`.specify/` はSpec Kit本体、テンプレート、Constitutionの保管場所。
+文書間の優先順位は `docs/prompts/master.md` に一本化する。上位から **`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様（`specs/NNN-initial-live-recorder/`）→ **5つの運用補助資料（`docs/ARCHITECTURE.md`、`CONFIGURATION.md`、`INSTALL_WSL2.md`、`TROUBLESHOOTING.md`、`LIMITATIONS.md`）→ `docs/IMPLEMENTATION_NOTES.md` → `README.md`**。本ディレクトリは正本から抽出した横断設計であり、Feature成果物（`spec.md`、`plan.md`、`tasks.md` と必要な `research.md`、`data-model.md`、`contracts/`）で具体化する。矛盾したら上位文書を変更・承認してから下位へ反映し、試作の経験知だけで正本を変更しない。`.specify/` はSpec Kit本体、テンプレート、Constitutionの保管場所。運用補助資料は実装前・担当タスク・完成前に参照・更新し、過去の試行時点の説明を現行実装の検証済み事実にしない。
 
 ## 文書一覧
 

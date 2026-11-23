@@ -1,8 +1,9 @@
 <!--
 Sync Impact Report
-- Version change: unversioned template → 1.0.0 → 1.0.1 → 1.0.2
+- Version change: unversioned template → 1.0.0 → 1.0.1 → 1.0.2 → 1.0.3
 - 1.0.1: 技術制約の名称を明確化（リポジトリ名 live-rec-lab、アプリケーション名 LiveRecorder）
 - 1.0.2: P1横断修正（録画先分離、要件・テスト追跡、Spec Kit Feature固定、ログ秘匿、バックアップの削除境界、配信者フォルダ安全名）を反映。新たな原則・節は追加しない
+- 1.0.3: P0/P1横断修正（main保護、Feature再実行時の上書き防止、analyzeの読取専用と承認、convergeと原本監査の分離、運用補助資料の参照、秘密情報のGit除外）を明文化
 - Modified principles:
   - [PRINCIPLE_1_NAME] → I. 動く最小経路を先にする
   - [PRINCIPLE_2_NAME] → II. 取得済みデータを失わない
@@ -128,17 +129,24 @@ component、event、correlation_id、例外を残し、秘密情報は除かな�
   設計の横断整理は `docs/design/`、機能単位の仕様は `specs/NNN-feature/` とする。
 - 機能は `spec.md`、`plan.md`、`tasks.md`、実装とテストの順で進める。
   Spec Kit の手順は `.cursor/skills/`、`.agents/skills/`、`.claude/skills/` の
-  `SKILL.md` に従う。
-- Spec Kitの実行前に、作業ブランチ、`.specify/feature.json`（存在する場合）と
-  `SPECIFY_FEATURE_DIRECTORY`（設定されている場合）、既存の
+  `SKILL.md` に従う。上記5つの運用補助資料とREADMEは実装前・関連タスク中・完了時に参照・整合更新し、古い実装状況を現行の実装済み事実にしない。
+- Spec Kitの実行前にGitの作業ブランチと既存変更を確認する。利用者の明示許可なく
+  `main` で実装しない。フックを含め無断のブランチ作成・切替・Git破壊操作をしない。
+- `.specify/feature.json` と `SPECIFY_FEATURE_DIRECTORY`（優先される場合）、既存の
   `specs/*-initial-live-recorder/` を照合してアクティブFeatureを固定する。
-  ブランチ切替だけでFeatureが切り替わったと判断せず、既存Featureを重複作成したり、
-  不一致のまま別Featureへ書き込んではならない。
+  初回に `specs/001-initial-live-recorder/` が未作成でも、その指定パスに初回生成する。
+  ブランチ名だけでFeatureを判断せず、既存Featureを重複作成したり、
+  不一致のまま別Featureへ書き込んではならない。既存 `spec.md` を
+  `speckit-specify` によって再初期化・上書きしない。
 - 初期実装は1 Featureを維持し、同じ `tasks.md` で検証可能な作業単位に分ける。
   `traceability.md` に原本の節・固定 `AC`／`TC`・Spec・タスク・テスト証跡・結果を記録する。
   実装前の分析と実装後の収束検証では、Feature内の整合性だけでなく
   `requirements.md` 原本の全節・§17の `TC`・§23の `AC` から逆引きして漏れを検出する。
+  `speckit-analyze` は読取専用で、修正は必要な承認を得た後に別工程で実行する。
+  `speckit-converge` は `tasks.md` への追記のみとし、原本起点の監査を別工程で行う。
 - コミットは利用者が指示したときだけ行う。件名と本文は `AGENTS.md` の形式に従う。
+- `.env`・秘密鍵・トークン・ローカルDB・ログ・録画ファイルをGitへ含めない。
+  `.gitignore` と `git ls-files` を使い既追跡ファイルも確認する。
 - 検証していない実配信・実機の結果を、検証済みと報告してはならない。
 
 ## Governance
@@ -157,4 +165,4 @@ component、event、correlation_id、例外を残し、秘密情報は除かな�
 - 日常の作業入口は `AGENTS.md` とする。
   本書は開発原則の正本であり、アプリの要件本文を重複して定義しない。
 
-**Version**: 1.0.2 | **Ratified**: 2026-11-23 | **Last Amended**: 2026-11-23
+**Version**: 1.0.3 | **Ratified**: 2026-11-23 | **Last Amended**: 2026-11-23
