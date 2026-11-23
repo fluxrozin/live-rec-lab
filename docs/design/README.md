@@ -6,23 +6,19 @@
 
 ## 文書の役割と優先順位
 
-1. [`../../requirements.md`](../../requirements.md) — 機能・非機能要件、制約、受入条件の**正本**。
-2. [`../UI_UX.md`](../UI_UX.md) — UI/UXの詳細方針の**正本**。矛盾時は `requirements.md` を優先。
-3. 本ディレクトリ — 上記から抽出した**実装前の横断設計**。新しい要件を勝手に確定させない。
-4. `../../specs/NNN-feature/` — GitHub Spec Kitで機能単位に作る `spec.md`、`plan.md`、`tasks.md` と必要な `research.md`、`data-model.md`、`contracts/` 等。
-5. `../../.specify/` — Spec Kit本体、テンプレート、Constitution。アプリ設計文書の保管場所にしない。
+文書間の優先順位は `docs/prompts/master.md` に一本化する。上位から **`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様（`specs/NNN-initial-live-recorder/`）→ `docs/IMPLEMENTATION_NOTES.md`**。本ディレクトリは正本から抽出した横断設計であり、Feature成果物（`spec.md`、`plan.md`、`tasks.md` と必要な `research.md`、`data-model.md`、`contracts/`）で具体化する。矛盾したら上位文書を変更・承認してから下位へ反映し、試作の経験知だけで正本を変更しない。`.specify/` はSpec Kit本体、テンプレート、Constitutionの保管場所。
 
 ## 文書一覧
 
 | 文書 | 設計する範囲 | 主な出典 |
 | --- | --- | --- |
-| [01-system-architecture.md](01-system-architecture.md) | 全体構成、プロセス、モジュール責務、依存関係 | 要件 §2–3, §10.1.1 |
-| [02-platforms-and-monitoring.md](02-platforms-and-monitoring.md) | 配信サービス接続、ID正規化、レート制御、状態検知 | 要件 §4–5 |
-| [03-recording-and-comments.md](03-recording-and-comments.md) | 録画・コメントの独立ジョブ、時刻、SRT、欠損 | 要件 §6–8 |
-| [04-data-and-storage.md](04-data-and-storage.md) | SQLiteエンティティ、ファイル配置、確定と復旧 | 要件 §9–10 |
-| [05-web-and-ux.md](05-web-and-ux.md) | Web/API境界、画面遷移、状態表現、UI原則 | 要件 §11、UI/UX全体 |
-| [06-operations-and-quality.md](06-operations-and-quality.md) | 運用、セキュリティ、ログ、テスト、受入条件 | 要件 §13–17, §23 |
-| [07-decisions-and-gaps.md](07-decisions-and-gaps.md) | 既存資料間の不整合、要実証事項、未決定事項 | 上記全体・リポジトリ現状 |
+| [01-system-architecture.md](01-system-architecture.md) | 全体構成、プロセス、モジュール責務、依存関係、状態集計の境界 | 要件 §2–3, §10.1.1 |
+| [02-platforms-and-monitoring.md](02-platforms-and-monitoring.md) | 配信サービス接続、ID正規化、状態検知、SDK寿命、HLSの本編判定 | 要件 §4–5 |
+| [03-recording-and-comments.md](03-recording-and-comments.md) | 独立ジョブ、録画実体の検証、時刻、SRTスキップ、セッション取得品質 | 要件 §6–8 |
+| [04-data-and-storage.md](04-data-and-storage.md) | SQLiteエンティティ、セッション横断採番、ファイル確定・照合・復旧 | 要件 §9–10 |
+| [05-web-and-ux.md](05-web-and-ux.md) | Web/API境界、7画面、セッション／ジョブ／SRT／欠損の表示 | 要件 §11、UI/UX全体 |
+| [06-operations-and-quality.md](06-operations-and-quality.md) | 運用、セキュリティ、可観測性、障害注入、実機受入 | 要件 §13–17, §23 |
+| [07-decisions-and-gaps.md](07-decisions-and-gaps.md) | 既存資料間の不整合、追加の実証リスク、未決定事項 | 上記全体・リポジトリ現状 |
 
 ## ステータスの読み方
 
@@ -30,10 +26,19 @@
 - **設計方針**：要件が指示する責務や処理の整理。詳細なAPIシグネチャやDDLなどは実装フェーズで検証する。
 - **要検証／要決定**：外部APIや実機の挙動、未定の振る舞い。未実装・未確認を「対応済み」と表現しない。
 
+## 横断的な設計の確認事項
+
+- **録画ジョブの完了はセッションの完全取得ではない。** 過去の失敗・無効ファイル・欠損を、最新ジョブの成功で隠さない。
+- 空の試行で保持セグメントの連番を消費せず、セッションIDと親ジョブの複合外部キー・セッション内一意制約・採番予約で複数ジョブの番号を重複させない。未確定ファイルを先に記録しつつ、最終ファイルの存在とメディア内容で検証する。
+- 配信者の論理削除後の同一キー再登録は既存行を再有効化する。ファイル名の初回同名衝突にはセッション固定の識別子と排他的な確定を使う。コメント期限は初期無期限、期限削除時はSRTを先に削除しSQLiteコメントを消去して期限削除済み状態を記録する。
+- SRTの対象コメント0件は「字幕対象なし（スキップ）」。コメントを収集できなかった場合や生成失敗と混同せず、後着コメント待ちなら暫定として扱い、入力版数と生成時版数で再同期を判定する。SRT公開前後の版数競合・旧正常版保全・0件への正常更新時の旧SRT除去も検証する。
+- 監視の `UNKNOWN`・`ERROR` は明示的な配信終了ではない。監視・録画・コメントの設定OFFは停止対象と復帰条件を分ける。自動削除は確定済みファイルのみに限定し、履歴のみ削除を提供しない。HLSの短い先頭や検証できないメディアも本編全体の録画完了とは扱わない。
+- テスト結果は実機・ローカル・未検証を分け、§17の固定 `TC` と§23の `AC` に対応付ける。既存アプリとの保存ルート分離、配信者フォルダの永続的な衝突解消、古いSQLiteバックアップの手動破棄・復元前確認、ログの閲覧時再マスキングも横断テストに含める。試行固有のバージョン・パス・閾値を固定要件にしない。未確認の外部API仕様や実装済み状態を創作しない。
+
 ## 変更・利用ルール
 
 - 機能要件を変更する場合、先に `requirements.md` を更新し、影響する設計・Spec Kit featureへ反映する。UI固有変更は `docs/UI_UX.md` も更新する。
 - 本書の各設計は、Source of Truthの**再掲ではなく、各コンポーネントを実装できる粒度に整理した参照用文書**である。重複記述が矛盾した場合は原本を確認する。
-- 細かなRESTエンドポイント、SQLカラム型・制約、状態遷移表の完全版は、実装対象が確定したとき `specs/NNN-feature/` に作る。横断設計との整合を保つ。
+- 細かなRESTエンドポイント、SQLカラム型・制約、状態遷移表の完全版は、実装前に初期Featureの `data-model.md` 等へ具体化する。横断設計との整合を保つ。
 - `src/` 内に実装のない空モジュールや、将来機能用のダミーコードを生成しない。
 - 初期対象は **Windows 11 + WSL2 Ubuntu 24.04 / Python 3.12 / uv / TikTok LIVE + ツイキャス**。本リポジトリの現在の `README.md` と要件の前提に合わせたもので、別構成のWindowsネイティブ案を無断で混入しない。

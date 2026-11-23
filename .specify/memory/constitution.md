@@ -1,14 +1,15 @@
 <!--
 Sync Impact Report
-- Version change: unversioned template → 1.0.0 → 1.0.1
+- Version change: unversioned template → 1.0.0 → 1.0.1 → 1.0.2
 - 1.0.1: 技術制約の名称を明確化（リポジトリ名 live-rec-lab、アプリケーション名 LiveRecorder）
+- 1.0.2: P1横断修正（録画先分離、要件・テスト追跡、Spec Kit Feature固定、ログ秘匿、バックアップの削除境界、配信者フォルダ安全名）を反映。新たな原則・節は追加しない
 - Modified principles:
   - [PRINCIPLE_1_NAME] → I. 動く最小経路を先にする
   - [PRINCIPLE_2_NAME] → II. 取得済みデータを失わない
   - [PRINCIPLE_3_NAME] → III. 未確認を成功にしない
   - [PRINCIPLE_4_NAME] → IV. ローカル境界を超えない
   - [PRINCIPLE_5_NAME] → V. 障害を追える記録を残す
-- Added sections: 技術制約, 開発の流れ（プレースホルダを置換）
+- Added sections: 技術制約, 開発の流れ（プレースホルダを置換。1.0.2での追加なし）
 - Removed sections: なし
 - Follow-up TODOs: なし
 -->
@@ -36,12 +37,22 @@ Sync Impact Report
 
 - 取得できなかった区間を、取得できたものとして扱ってはならない。
 - Windows 側の録画先が使えないとき、黙って WSL2 内へ保存先を切り替えてはならない。
+  試作と既存 LiveRecorder／別試作の録画・SRT保存先は分離する。DBに永続化された設定を含む
+  **実効録画ルート**をWindows側の同一性・親子関係で照合し、衝突時は録画を開始してはならない。
+  既存アプリの設定を自動確認できない場合は、確認済みとみなさず手動照合を必要とする。
+- 同一の正規化済み配信者IDはサービスをまたいで同じ保存フォルダに対応付ける。
+  異なるIDのWindows安全名が衝突した場合だけ元ID由来の安定した識別子で分離し、
+  サービス非依存の対応を永続化する。既存名を改名したり、管理外フォルダを黙って取り込んではならない。
 - 稼働中の SQLite ファイルを、そのままコピーしてバックアップとしてはならない。
   `backup` は一貫したバックアップ手段を使わなければならない。
+  手動SQLiteバックアップはコメント保存期限による自動削除の対象外である。
+  期限切れデータを含む古いバックアップは利用者が破棄・差し替えし、
+  アプリは管理外バックアップを無断削除せず、削除成功と誤表示してはならない。
+  手動復元時はコメント期限と派生SRTの整合を再評価するまで運用を再開してはならない。
 - 未確定の録画ファイルを、検証前に完成扱いにしてはならない。
 - 秘密情報、署名付き URL、認証トークンを Git、ログ、画面へ残してはならない。
 
-根拠は `requirements.md` §1.2、§10.2、§13.3、§14、§15.2。
+根拠は `requirements.md` §1.2、§10.2、§13.3、§13.6、§14、§15.2。
 
 ### III. 未確認を成功にしない
 
@@ -54,8 +65,11 @@ Sync Impact Report
 - 新しい振る舞いは `requirements.md` に書いてから実装する。
   UI 固有の変更は `docs/UI_UX.md` も先に改める。
   `docs/design/` は原本の抽出であり、原本にない要件を確定してはならない。
+- `requirements.md` §17の `TC` と§23の `AC` は固定IDとして維持し、
+  原本の節・Feature仕様・タスク・テスト証跡・検証結果まで追跡する。
+  未対応・未検証を完了とみなしてはならない。
 
-根拠は `requirements.md` §1.2 と `docs/design/README.md`。
+根拠は `requirements.md` §1.2、§17、§23 と `docs/design/README.md`。
 
 ### IV. ローカル境界を超えない
 
@@ -66,7 +80,8 @@ LAN やインターネットへ認証なしで公開してはならない。
   GET で削除や設定変更をしてはならない。
 - 通常の Linux ユーザー権限で動かし、root を常用してはならない。
 - 利用者入力の URL を、検証なしで FFmpeg、Streamlink、yt-dlp へ渡してはならない。
-- ダウンロードは録画保存ルートの外のファイルを返してはならない。
+- Web UI／APIから録画動画・SRT本体をダウンロード可能にしてはならない。
+  ログ閲覧も許可されたアプリ内部の記録だけに限定する。
 
 根拠は `requirements.md` §2.2、§13。
 
@@ -74,13 +89,16 @@ LAN やインターネットへ認証なしで公開してはならない。
 
 失敗は握りつぶして正常終了にしてはならない。構造化ログに、UTC 時刻、
 component、event、correlation_id、例外を残し、秘密情報は除かなければならない。
+ログの記録時だけでなく、古いログ・例外文を含む閲覧用の応答生成前にも再マスキングし、
+一覧・詳細・検索結果・コピーで秘密情報を露出させてはならない。
+非秘匿部分は省略せず表示し、ログを確認できない状態を正常とみなしてはならない。
 
 - 録画失敗、コメント収集失敗、外部 API 失敗は別々に記録しなければならない。
 - 画面ロック中とディスプレイ OFF 中は処理を続ける前提とする。
   スリープと休止を、それと同じ継続成功の条件にしてはならない。
 - 停止中に終わった配信を、録画できたものとして扱ってはならない。
 
-根拠は `requirements.md` §14。
+根拠は `requirements.md` §11.7、§14.3。
 
 ## 技術制約
 
@@ -92,8 +110,11 @@ component、event、correlation_id、例外を残し、秘密情報は除かな�
 - 実行時データの既定は `~/.local/share/live-rec-lab/`（SQLite）と
   `~/.local/state/live-rec-lab/`（runtime と logs）とする。
   ディレクトリ名はリポジトリ名に合わせる。
-- Windows 側の録画ルート例 `D:\LiveRecorder\recordings` は、アプリケーション名を使った
-  動画と SRT の保存先であり、上記の実行時ディレクトリとは別パスである。
+- Windows 側の**試作専用**録画ルート例は `D:\live-rec-lab\recordings`
+  （WSL2では `/mnt/d/live-rec-lab/recordings`）とする。
+  既存LiveRecorderの保存先例 `D:\LiveRecorder\recordings` を試作の既定として流用しない。
+  SQLite・ログ・runtimeと録画／SRTは用途別に分離し、別worktree／別インスタンスの同時運用でも
+  DB・ログ・実行状態・録画先を共有しない。
   SQLite を `/mnt/c`、NAS、SMB、同期ストレージへ置いてはならない。
 - UI はライト系テーマを 1 種類だけとする。
   ダークテーマ、テーマ切替、OS の配色への追従を実装してはならない。
@@ -108,6 +129,15 @@ component、event、correlation_id、例外を残し、秘密情報は除かな�
 - 機能は `spec.md`、`plan.md`、`tasks.md`、実装とテストの順で進める。
   Spec Kit の手順は `.cursor/skills/`、`.agents/skills/`、`.claude/skills/` の
   `SKILL.md` に従う。
+- Spec Kitの実行前に、作業ブランチ、`.specify/feature.json`（存在する場合）と
+  `SPECIFY_FEATURE_DIRECTORY`（設定されている場合）、既存の
+  `specs/*-initial-live-recorder/` を照合してアクティブFeatureを固定する。
+  ブランチ切替だけでFeatureが切り替わったと判断せず、既存Featureを重複作成したり、
+  不一致のまま別Featureへ書き込んではならない。
+- 初期実装は1 Featureを維持し、同じ `tasks.md` で検証可能な作業単位に分ける。
+  `traceability.md` に原本の節・固定 `AC`／`TC`・Spec・タスク・テスト証跡・結果を記録する。
+  実装前の分析と実装後の収束検証では、Feature内の整合性だけでなく
+  `requirements.md` 原本の全節・§17の `TC`・§23の `AC` から逆引きして漏れを検出する。
 - コミットは利用者が指示したときだけ行う。件名と本文は `AGENTS.md` の形式に従う。
 - 検証していない実配信・実機の結果を、検証済みと報告してはならない。
 
@@ -120,9 +150,11 @@ component、event、correlation_id、例外を残し、秘密情報は除かな�
   原則の削除や意味の変更は MAJOR、原則や節の追加は MINOR、
   文言の明確化は PATCH とする。
 - 制定日と最終改訂日を本書の版表示に残す。
-- レビューでは、未確認の成功表示、秘密情報の混入、
+- レビューでは、未確認の成功表示、ログ閲覧時の秘密情報漏えい、
+  実効録画先の衝突、配信者フォルダ名の誤共有、旧SQLiteバックアップの削除境界、
+  `AC`／`TC` の追跡漏れ、Spec Kitの誤Feature選択、
   パッケージ名と実行時ディレクトリの逸脱、Python 3.12 以外の採用を確認する。
 - 日常の作業入口は `AGENTS.md` とする。
   本書は開発原則の正本であり、アプリの要件本文を重複して定義しない。
 
-**Version**: 1.0.1 | **Ratified**: 2026-11-23 | **Last Amended**: 2026-11-23
+**Version**: 1.0.2 | **Ratified**: 2026-11-23 | **Last Amended**: 2026-11-23
