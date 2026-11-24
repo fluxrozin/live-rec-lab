@@ -1,10 +1,13 @@
 import asyncio
 import json
 import os
+import struct
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from hashlib import sha256
 from pathlib import Path
+from threading import Event
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -16,7 +19,7 @@ from live_rec_lab.db.models import CollectionGap, RecordingJob, RecordingSegment
 from live_rec_lab.db.session import session_scope
 from live_rec_lab.platforms.base import Snapshot
 from live_rec_lab.recording.engines import build_command, installed_ffmpeg_dir, media_binary, run_command
-from live_rec_lab.recording.hls_playlist import HlsMirror, filter_preroll_playlist, pick_variant
+from live_rec_lab.recording.hls_playlist import HlsMirror, _split_initialization, filter_preroll_playlist, pick_variant
 from live_rec_lab.recording.manager import (
     RecordingManager,
     _finalize_open,
@@ -39,6 +42,7 @@ from live_rec_lab.recording.segments import (
     attempt_is_empty,
     describe_probe_failure,
     finalize_segment,
+    is_twitcasting_preroll,
     probe_media,
     remux_args,
     reserve_segment_path,
@@ -168,6 +172,85 @@ def test_unnamed_prefix_before_first_discontinuity_is_kept():
     assert "https://edge.twitcasting.tv/hls/init.mp4" in filtered.text
     assert filtered.text.index("intro.mp4") < filtered.text.index("#EXT-X-DISCONTINUITY")
 
+
+def test_initialization_change_identifies_preroll_with_unmarked_media_name():
+    playlist = _PREROLL_PLAYLIST.replace("preroll-media.2.mp4", "media-intro.2.mp4")
+    filtered = filter_preroll_playlist(playlist, _PLAYLIST)
+    assert filtered.dropped_preroll == 1
+    assert "media-intro.2.mp4" not in filtered.text
+    assert "init.3.mp4" in filtered.text
+    assert "media.0.mp4" in filtered.text
+
+
+@pytest.mark.parametrize("media", ["preroll-media.2.mp4", "loading.2.mp4"])
+def test_preroll_is_removed_at_an_init_change_without_discontinuity(media):
+    playlist = _PREROLL_PLAYLIST.replace("preroll-media.2.mp4", media).replace("#EXT-X-DISCONTINUITY\n", "")
+    filtered = filter_preroll_playlist(playlist, _PLAYLIST)
+    assert filtered.dropped_preroll == 1
+    assert filtered.kept_segments == 1
+    assert filtered.media_sequence == 3
+    assert "init.3.mp4" in filtered.text
+    assert media not in filtered.text
+
+
+def test_preroll_map_identifies_an_initial_playlist_with_unnamed_media():
+    playlist = _PREROLL_PLAYLIST.split("#EXT-X-DISCONTINUITY")[0].replace("preroll-media.2.mp4", "loading.2.mp4")
+    filtered = filter_preroll_playlist(playlist, _PLAYLIST)
+    assert filtered.kept_segments == 1
+    assert filtered.only_preroll
+
+
+def test_preroll_name_does_not_drop_a_shared_program_init():
+    playlist = _PREROLL_PLAYLIST.replace("preroll-init.2.mp4", "shared-init.mp4").replace(
+        '#EXT-X-MAP:URI="/tc.livehls/v1/streams/819154156/hls/672.96/init.3.mp4"\n', "",
+    )
+    filtered = filter_preroll_playlist(playlist, _PLAYLIST)
+    assert filtered.kept_segments == 2
+    assert filtered.dropped_preroll == 0
+    assert "shared-init.mp4" in filtered.text
+
+
+def test_preroll_retains_a_preceding_byte_range_when_the_next_offset_is_implicit():
+    playlist = """#EXTM3U
+#EXT-X-MAP:URI="preroll-init.mp4"
+#EXTINF:2,
+#EXT-X-BYTERANGE:50@0
+media.mp4
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:2,
+#EXT-X-BYTERANGE:60
+media.mp4
+"""
+    filtered = filter_preroll_playlist(playlist, _PLAYLIST)
+    assert filtered.kept_segments == 2
+    _, program = _split_initialization(filtered)
+    assert program is not None and "#EXT-X-BYTERANGE:60@50" in program.text
+
+
+def test_split_preserves_implicit_media_range_offset_after_initialization_change():
+    playlist = """#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA-SEQUENCE:4
+#EXT-X-MAP:URI="init.mp4",BYTERANGE="100@0"
+#EXTINF:2,
+#EXT-X-BYTERANGE:50@100
+media.m4s
+#EXTINF:2,
+#EXT-X-BYTERANGE:60
+media.m4s
+#EXT-X-MAP:URI="init.mp4",BYTERANGE="100@100"
+#EXTINF:2,
+#EXT-X-BYTERANGE:70
+media.m4s
+"""
+    filtered = filter_preroll_playlist(playlist, _PLAYLIST)
+    first, following = _split_initialization(filtered)
+    assert first.kept_segments == 2 and first.endlist
+    assert following is not None
+    assert following.media_sequence == 6
+    assert "#EXT-X-BYTERANGE:70@210" in following.text
+
+
 def test_playlist_without_preroll_or_discontinuity_is_unchanged():
     playlist = """#EXTM3U
 #EXT-X-MEDIA-SEQUENCE:5
@@ -220,7 +303,7 @@ def test_mirror_serves_playlist_without_preroll():
     asyncio.run(run())
 
 
-def test_mirror_serves_local_playlist_with_unclassified_prefix_intact():
+def test_mirror_preserves_unclassified_prefix_and_queues_following_media():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text=_UNNAMED_PREFIX)
 
@@ -235,20 +318,30 @@ def test_mirror_serves_local_playlist_with_unclassified_prefix_intact():
                 assert local != mirror.upstream
                 async with httpx.AsyncClient() as reader:
                     served = await reader.get(local)
-                assert served.text.count("#EXT-X-DISCONTINUITY") == 2
-                assert len([line for line in served.text.splitlines() if line.startswith("/")]) == 3
+                assert "#EXT-X-ENDLIST" in served.text
+                assert len([line for line in served.text.splitlines() if line.startswith("/")]) == 1
+                following = mirror.next_playlist
+                assert following is not None
+                assert following.media_sequence == 5
+                assert following.kept_segments == 2
+                assert following.text.count("#EXT-X-DISCONTINUITY") == 2
             finally:
                 await mirror.aclose()
 
     asyncio.run(run())
 
 
-def test_mirror_waits_while_only_preroll_candidate_is_available():
+@pytest.mark.parametrize("map_only", [False, True])
+def test_mirror_waits_while_only_preroll_candidate_is_available(map_only):
     short = """#EXTM3U
 #EXT-X-MEDIA-SEQUENCE:1
 #EXTINF:6.000,
 https://edge.twitcasting.tv/hls/preroll-candidate.mp4
 """
+    if map_only:
+        short = short.replace(
+            "#EXTINF", '#EXT-X-MAP:URI="preroll-init.mp4"\n#EXTINF',
+        ).replace("preroll-candidate", "loading-candidate")
     calls = {"count": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -271,6 +364,507 @@ https://edge.twitcasting.tv/hls/preroll-candidate.mp4
                 await mirror.aclose()
 
     asyncio.run(run())
+
+
+_SHORT_FINITE = """#EXTM3U
+#EXT-X-TARGETDURATION:6
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:6.000,
+intro.ts
+#EXT-X-ENDLIST
+"""
+
+_SHORT_LIVE = """#EXTM3U
+#EXT-X-TARGETDURATION:6
+#EXT-X-MEDIA-SEQUENCE:20
+#EXTINF:3.000,
+main.ts
+"""
+
+
+@pytest.fixture
+def short_mpegts(tmp_path):
+    source = tmp_path / "fixture.ts"
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=size=160x120:rate=10",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=8000",
+            "-t", "0.4", "-c:v", "libx264", "-c:a", "aac", "-f", "mpegts", str(source),
+        ],
+        check=True,
+    )
+    return source
+
+
+def test_mirror_waits_for_main_when_finite_variant_disappears(monkeypatch, short_mpegts, tmp_path):
+    monkeypatch.setattr("live_rec_lab.recording.hls_playlist._REFRESH_SECONDS", 0.01)
+    intro_requests = 0
+    main_read = Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal intro_requests
+        match request.url.path:
+            case "/master.m3u8":
+                variant = "main.m3u8" if intro_requests >= 2 else "intro.m3u8"
+                return httpx.Response(200, text=f"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n{variant}\n")
+            case "/intro.m3u8":
+                intro_requests += 1
+                if intro_requests == 1:
+                    return httpx.Response(200, text=_SHORT_FINITE)
+                return httpx.Response(404)
+            case "/main.m3u8":
+                endlist = "#EXT-X-ENDLIST\n" if main_read.is_set() else ""
+                return httpx.Response(200, text=f"{_SHORT_LIVE}{endlist}")
+            case _:
+                raise AssertionError(request.url.path)
+
+    def resource(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/main.ts"
+        main_read.set()
+        return httpx.Response(200, stream=httpx.ByteStream(short_mpegts.read_bytes()))
+
+    sync_client = httpx.Client
+    transport = httpx.MockTransport(resource)
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: sync_client(transport=transport, **kwargs))
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            mirror = HlsMirror("https://edge.twitcasting.tv/master.m3u8", client=client, wait_seconds=1)
+            try:
+                local = await mirror.ffmpeg_input(asyncio.Event())
+                assert local is not None
+                async with httpx.AsyncClient() as reader:
+                    served = await reader.get(local)
+                assert "#EXT-X-MEDIA-SEQUENCE:20" in served.text
+                assert "#EXT-X-ENDLIST" not in served.text
+                capture = tmp_path / "main.capture.ts"
+                command = build_command("ffmpeg", local, capture, "best")
+                code, error = await asyncio.wait_for(run_command(command, asyncio.Event()), 12)
+                assert code == 0, error
+                assert main_read.is_set()
+                media = probe_media(capture)
+                assert media is not None and media.validation_error is None
+            finally:
+                await mirror.aclose()
+
+    asyncio.run(run())
+
+
+def test_mirror_drains_active_variant_when_replacement_restarts_sequence(monkeypatch):
+    monkeypatch.setattr("live_rec_lab.recording.hls_playlist._REFRESH_SECONDS", 0.01)
+    unavailable = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        match request.url.path:
+            case "/master.m3u8":
+                variant = "new.m3u8" if unavailable else "old.m3u8"
+                return httpx.Response(200, text=f"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n{variant}\n")
+            case "/old.m3u8":
+                return httpx.Response(404) if unavailable else httpx.Response(200, text=_SHORT_LIVE)
+            case "/new.m3u8":
+                return httpx.Response(200, text=_SHORT_LIVE.replace("SEQUENCE:20", "SEQUENCE:1"))
+            case _:
+                raise AssertionError(request.url.path)
+
+    async def run() -> None:
+        nonlocal unavailable
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            mirror = HlsMirror("https://edge.twitcasting.tv/master.m3u8", client=client)
+            try:
+                local = await mirror.ffmpeg_input(asyncio.Event())
+                assert local is not None
+                unavailable = True
+                async with httpx.AsyncClient() as reader:
+                    for _ in range(100):
+                        served = await reader.get(local)
+                        if "#EXT-X-ENDLIST" in served.text:
+                            break
+                        await asyncio.sleep(0.01)
+                assert "#EXT-X-ENDLIST" in served.text
+                assert "#EXT-X-MEDIA-SEQUENCE:20" in served.text
+                assert mirror.end_confirmed is False
+            finally:
+                await mirror.aclose()
+
+    asyncio.run(run())
+
+
+def test_mirror_does_not_confirm_end_after_only_playlist_progress(monkeypatch):
+    monkeypatch.setattr("live_rec_lab.recording.hls_playlist._REFRESH_SECONDS", 0.01)
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        assert request.url.path == "/preview.m3u8"
+        requests += 1
+        playlist = _SHORT_LIVE
+        if requests >= 2:
+            playlist += "#EXTINF:3.000,\nmore-preview.ts\n"
+        if requests >= 3:
+            playlist += "#EXT-X-ENDLIST\n"
+        return httpx.Response(200, text=playlist)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            mirror = HlsMirror("https://edge.twitcasting.tv/preview.m3u8", client=client)
+            try:
+                local = await mirror.ffmpeg_input(asyncio.Event())
+                assert local is not None
+                async with httpx.AsyncClient() as reader:
+                    for _ in range(100):
+                        served = await reader.get(local)
+                        if "#EXT-X-ENDLIST" in served.text:
+                            break
+                        await asyncio.sleep(0.01)
+                assert "#EXT-X-ENDLIST" in served.text
+                assert mirror.end_confirmed is False
+            finally:
+                await mirror.aclose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "outcome", [
+        "recovered", "finite_main", "exhausted", "platform_end", "manual_stop", "confirmed_after_eof",
+        "interrupted_same_finite", "missing_media_same_finite",
+    ],
+)
+def test_twitcasting_unconfirmed_eof_preserves_video_and_recovers(
+    db, paths, monkeypatch, outcome, short_mpegts, caplog,
+):
+    from live_rec_lab.recording import manager as recording_manager
+
+    root = paths["recordings"]
+    root.mkdir()
+    streamer = Streamer(platform="twitcasting", platform_user_id="caster")
+    db.add(streamer)
+    db.flush()
+    session = StreamSession(
+        streamer_id=streamer.id, platform_stream_id="live-1", status="LIVE", detected_at=utcnow(),
+    )
+    db.add(session)
+    db.commit()
+    session_id = session.id
+    source = short_mpegts
+    recovery_checks = 0
+    captures = 0
+    old = "https://edge.twitcasting.tv/intro.m3u8"
+    new = "https://edge.twitcasting.tv/main.m3u8"
+    interrupted = outcome == "interrupted_same_finite"
+    missing_media = outcome == "missing_media_same_finite"
+    same_finite = interrupted or missing_media
+    recovers = same_finite or outcome in {"recovered", "finite_main"}
+    confirmed_after_eof = outcome == "confirmed_after_eof"
+    main_requested = False
+    monkeypatch.setattr("live_rec_lab.recording.hls_playlist._REFRESH_SECONDS", 0.01)
+
+    async def refresh_source() -> str | None:
+        nonlocal recovery_checks
+        recovery_checks += 1
+        if confirmed_after_eof:
+            with session_scope() as current:
+                current.get(StreamSession, session_id).status = "ENDED"
+        return new if recovers and not same_finite else None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == new:
+            endlist = "#EXT-X-ENDLIST\n" if outcome == "finite_main" else ""
+            return httpx.Response(200, text=f"{_SHORT_LIVE}{endlist}")
+        assert str(request.url) == old
+        if confirmed_after_eof:
+            endlist = "#EXT-X-ENDLIST\n" if main_requested else ""
+            return httpx.Response(200, text=f"{_SHORT_LIVE}{endlist}")
+        finite = _SHORT_FINITE.replace("intro.ts", f"intro.ts?signature={recovery_checks}")
+        if same_finite:
+            finite = finite.replace("#EXT-X-ENDLIST", "#EXTINF:6.0,\nmain.ts\n#EXT-X-ENDLIST")
+        return httpx.Response(200, text=finite)
+
+    if missing_media:
+        sync_client = httpx.Client
+        missing_transport = httpx.MockTransport(lambda request: httpx.Response(404))
+        monkeypatch.setattr(httpx, "Client", lambda **kwargs: sync_client(transport=missing_transport, **kwargs))
+
+    async def run_command(command, stop, **_callbacks):
+        nonlocal captures, main_requested
+        captures += 1
+        main_requested = True
+        if confirmed_after_eof:
+            local = command[command.index("-i") + 1]
+            async with httpx.AsyncClient() as reader:
+                for _ in range(100):
+                    response = await reader.get(local)
+                    if "#EXT-X-ENDLIST" in response.text:
+                        break
+                    await asyncio.sleep(0.01)
+            assert "#EXT-X-ENDLIST" in response.text
+        Path(command[-1]).write_bytes(source.read_bytes())
+        if interrupted and captures == 1:
+            return 183, "Invalid data found: https://edge.twitcasting.tv/main.ts?signature=secret-fixture"
+        if missing_media and captures == 1:
+            local = command[command.index("-i") + 1]
+            async with httpx.AsyncClient() as reader:
+                playlist = (await reader.get(local)).text
+                media = [line for line in playlist.splitlines() if line.startswith("/")][-1]
+                assert (await reader.get(httpx.URL(local).join(media))).status_code == 502
+        if (recovers and captures == 2) or outcome == "platform_end":
+            with session_scope() as current:
+                current.get(StreamSession, session_id).status = "ENDED"
+        if outcome == "manual_stop":
+            with session_scope() as current:
+                current.scalars(select(RecordingJob)).one().manual_stop_requested = True
+            stop.set()
+        return 0, ""
+
+    async def no_retry_delay(*_args):
+        pass
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            def mirror_for_attempt(url, **kwargs):
+                wait_seconds = 60 if same_finite and captures else 0
+                return HlsMirror(url, client=client, wait_seconds=wait_seconds, **kwargs)
+
+            monkeypatch.setattr(recording_manager, "HlsMirror", mirror_for_attempt)
+            monkeypatch.setattr(recording_manager, "run_command", run_command)
+            monkeypatch.setattr(recording_manager, "_wait_to_retry", no_retry_delay, raising=False)
+            recorder = RecordingManager()
+            recorder.start(session_id, "twitcasting", "caster", old, root, "Asia/Tokyo", "best",
+                           refresh_source=refresh_source)
+            await asyncio.wait_for(recorder.tasks[session_id], 5)
+
+    asyncio.run(run())
+    job = db.scalars(select(RecordingJob)).one()
+    segments = db.scalars(select(RecordingSegment).order_by(RecordingSegment.segment_number)).all()
+    assert job.status == ("COMPLETED" if confirmed_after_eof else "PARTIAL")
+    assert len(segments) == (2 if recovers else 1)
+    assert all(segment.validation_status == "valid" and Path(segment.file_path).is_file() for segment in segments)
+    if confirmed_after_eof:
+        assert recovery_checks == 1
+        assert not db.scalars(select(CollectionGap).where(CollectionGap.job_type == "recording")).all()
+    elif recovers or outcome == "exhausted":
+        assert recovery_checks == (1 if recovers else 5)
+        assert db.scalars(select(CollectionGap).where(CollectionGap.job_type == "recording")).all()
+    else:
+        assert recovery_checks == 0
+    if outcome == "exhausted":
+        assert job.end_reason == "retry_limit"
+        assert job.last_error
+    if interrupted:
+        failure = next(record.metadata for record in caplog.records if getattr(record, "job_id", None) == job.id)
+        assert failure["stderr"] == "Invalid data found: [url]"
+        assert failure["returncode"] == 183
+    if missing_media:
+        failure = next(record.metadata for record in caplog.records if getattr(record, "job_id", None) == job.id)
+        assert failure["resource_results"] == {"media": {"404": 1}}
+        assert failure["returncode"] == 0
+
+
+def test_mirror_diagnostics_distinguish_init_and_media_responses(monkeypatch):
+    playlist = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4?signature=private"\n#EXTINF:8.0,\nmain.m4s\n'
+
+    def resource(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/init.mp4":
+            return httpx.Response(200, stream=httpx.ByteStream(b"initialization"))
+        assert request.url.path == "/main.m4s"
+        return httpx.Response(404)
+
+    sync_client = httpx.Client
+    transport = httpx.MockTransport(resource)
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: sync_client(transport=transport, **kwargs))
+
+    async def run() -> None:
+        playlist_transport = httpx.MockTransport(lambda request: httpx.Response(200, text=playlist))
+        async with httpx.AsyncClient(transport=playlist_transport) as client:
+            mirror = HlsMirror("https://edge.twitcasting.tv/main.m3u8", client=client)
+            try:
+                local = await mirror.ffmpeg_input(asyncio.Event())
+                assert local is not None
+                async with httpx.AsyncClient() as reader:
+                    served = await reader.get(local)
+                    init = served.text.split('URI="')[1].split('"')[0]
+                    media = next(line for line in served.text.splitlines() if line.startswith("/"))
+                    assert (await reader.get(httpx.URL(local).join(init))).content == b"initialization"
+                    assert (await reader.get(httpx.URL(local).join(media))).status_code == 502
+            finally:
+                await mirror.aclose()
+            result = mirror.diagnostics()
+            assert result["resource_results"] == {"init": {"200": 1}, "media": {"404": 1}}
+            assert "private" not in json.dumps(result)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("video_loops", "audio_loops", "different_packet", "expected"), [
+    (1, 1, False, True),
+    (2, 2, False, True),
+    (3, 3, False, True),
+    (2, 1, False, False),
+    (2, 2, True, False),
+])
+def test_twitcasting_preroll_matches_only_complete_audio_and_video_loops(
+    tmp_path, monkeypatch, video_loops, audio_loops, different_packet, expected,
+):
+    capture = tmp_path / "initial.ts"
+    capture.write_bytes(b"transport stream fixture")
+    video = [b"a" * 64, b"b" * 64]
+    audio = [b"c" * 64, b"d" * 64, b"e" * 64]
+    blocks = tuple((len(packets), sha256(b"".join(packets)).hexdigest()) for packets in (video, audio))
+    monkeypatch.setattr("live_rec_lab.recording.segments._TWITCASTING_PREROLL_BLOCKS", blocks, raising=False)
+    monkeypatch.setattr("live_rec_lab.recording.segments.media_binary", lambda name: name)
+    video_packets = video * video_loops
+    if different_packet:
+        video_packets[-1] = b"f" * 64
+    packet_rows = [
+        str(index).encode() + b", 0, 0, 1, 188, " + packet + b", S=1, 1, " + b"0" * 64
+        for index, stream in enumerate((video_packets, audio * audio_loops)) for packet in stream
+    ]
+
+    def framehash(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=b"\n".join(packet_rows), stderr=b"")
+
+    monkeypatch.setattr("live_rec_lab.recording.segments.subprocess.run", framehash)
+    assert is_twitcasting_preroll(capture) is expected
+
+
+@pytest.mark.parametrize("initially_finite,initial_media", [
+    (True, "program"), (False, "program"), (False, "preroll"), (True, "preroll_only"),
+])
+def test_twitcasting_keeps_program_across_an_initialization_change(
+    db, paths, monkeypatch, initially_finite, initial_media,
+):
+    from live_rec_lab.recording import manager as recording_manager
+
+    def fragmented_mp4(codec, color):
+        command = [
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color={color}:s=64x64:r=10",
+            "-f", "lavfi", "-i", "sine=sample_rate=16000", "-t", "1", "-c:v", codec,
+        ]
+        command += ["-c:a", "aac", "-movflags", "empty_moov+frag_keyframe+default_base_moof", "-f", "mp4", "pipe:1"]
+        data = subprocess.run(command, capture_output=True, check=True).stdout
+        offset = 0
+        while offset < len(data):
+            size, kind = struct.unpack_from(">I4s", data, offset)
+            if kind == b"moof":
+                return data[:offset], data[offset:]
+            offset += size
+        pytest.fail("FFmpeg did not generate a media fragment")
+
+    root = paths["recordings"]
+    root.mkdir()
+    streamer = Streamer(platform="twitcasting", platform_user_id="caster")
+    db.add(streamer)
+    db.flush()
+    session = StreamSession(
+        streamer_id=streamer.id, platform_stream_id="live-1", status="LIVE", detected_at=utcnow(),
+    )
+    db.add(session)
+    db.commit()
+    session_id = session.id
+
+    first_init, first_media = fragmented_mp4("libx264", "blue")
+    second_init, second_media = fragmented_mp4("mpeg4", "red")
+    preroll = initial_media != "program"
+    preroll_only = initial_media == "preroll_only"
+    if preroll:
+        signature = subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-i", "pipe:0", "-map", "0:v:0", "-map", "0:a:0", "-c", "copy",
+                "-bsf:v", "h264_mp4toannexb,filter_units=pass_types=1-5", "-bsf:a", "aac_adtstoasc",
+                "-f", "framehash", "-hash", "sha256", "pipe:1",
+            ],
+            input=first_init + first_media, capture_output=True, check=True,
+        ).stdout.strip()
+        packets: dict[bytes, list[bytes]] = {b"0": [], b"1": []}
+        for line in signature.splitlines():
+            if not line.startswith(b"#"):
+                fields = line.split(b",")
+                packets[fields[0].strip()].append(fields[5].strip())
+        blocks = tuple((len(stream), sha256(b"".join(stream)).hexdigest()) for stream in packets.values())
+        monkeypatch.setattr("live_rec_lab.recording.segments._TWITCASTING_PREROLL_BLOCKS", blocks, raising=False)
+    resources = {
+        "/first.mp4": first_init, "/first.m4s": first_media, "/second.mp4": second_init, "/second.m4s": second_media,
+    }
+    playlist = """#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:1
+#EXT-X-MEDIA-SEQUENCE:7
+#EXT-X-MAP:URI="first.mp4"
+#EXTINF:1,
+first.m4s
+#EXT-X-MAP:URI="second.mp4"
+#EXTINF:1,
+second.m4s
+#EXT-X-ENDLIST
+"""
+
+    first_requested = Event()
+
+    def resource(request):
+        data = resources[request.url.path]
+        if request.url.path == "/first.m4s":
+            first_requested.set()
+        return httpx.Response(200, headers={"Content-Length": str(len(data))}, stream=httpx.ByteStream(data))
+
+    sync_client = httpx.Client
+    transport = httpx.MockTransport(resource)
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: sync_client(transport=transport, **kwargs))
+    captures = 0
+    first_capture = None
+
+    async def capture(*args, **kwargs):
+        nonlocal captures, first_capture
+        if not captures:
+            first_capture = Path(args[0][-1])
+        code, error = await run_command(*args, **kwargs)
+        captures += 1
+        if captures == (1 if preroll_only else 2):
+            with session_scope() as current:
+                current.get(StreamSession, session_id).status = "ENDED"
+        return code, error
+
+    async def no_retry_delay(*_args):
+        pass
+
+    async def run():
+        def upstream(request):
+            published = playlist
+            if preroll_only or (not initially_finite and not first_requested.is_set()):
+                published = playlist.split('#EXT-X-MAP:URI="second.mp4"', 1)[0]
+                if preroll_only:
+                    published += "#EXT-X-ENDLIST\n"
+            return httpx.Response(200, text=published)
+
+        transport = httpx.MockTransport(upstream)
+        async with httpx.AsyncClient(transport=transport) as client:
+            monkeypatch.setattr(
+                recording_manager, "HlsMirror",
+                lambda url, **kwargs: HlsMirror(url, client=client, wait_seconds=0, **kwargs),
+            )
+            monkeypatch.setattr(recording_manager, "run_command", capture)
+            monkeypatch.setattr(recording_manager, "_wait_to_retry", no_retry_delay)
+            recorder = RecordingManager()
+            recorder.start(session_id, "twitcasting", "caster", "https://edge.twitcasting.tv/live.m3u8",
+                           root, "Asia/Tokyo", "best")
+            await asyncio.wait_for(recorder.tasks[session_id], 15)
+
+    asyncio.run(run())
+    segments = db.scalars(select(RecordingSegment).order_by(RecordingSegment.segment_number)).all()
+    expected_codecs = {"program": ["h264", "mpeg4"], "preroll": ["mpeg4"], "preroll_only": []}[initial_media]
+    assert [segment.segment_number for segment in segments] == list(range(1, len(expected_codecs) + 1))
+    assert [probe_media(Path(segment.file_path)).video_codec for segment in segments] == expected_codecs
+    assert all(segment.validation_status == "valid" for segment in segments)
+    job = db.scalars(select(RecordingJob)).one()
+    assert job.retry_count == 0 and job.status == ("FAILED" if preroll_only else "COMPLETED")
+    if preroll_only:
+        assert job.end_reason == "preroll_only"
+    assert {path for path in root.rglob("*") if path.is_file() and not path.name.startswith(".")} == {
+        Path(segment.file_path) for segment in segments
+    }
+    if preroll:
+        assert first_capture is not None and not first_capture.exists()
+        assert not first_capture.with_name(first_capture.name + ".remux.mp4").exists()
+    assert not db.scalars(select(CollectionGap).where(CollectionGap.job_type == "recording")).all()
 
 
 def test_mirror_keeps_segment_redirects_behind_validated_local_endpoint():

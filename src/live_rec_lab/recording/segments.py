@@ -22,6 +22,58 @@ from live_rec_lab.storage import matching_windows_name, publish_exclusive, safe_
 _FORMATS = {"mpegts": ".ts", "flv": ".flv", "matroska": ".mkv", "mp4": ".mp4"}
 _MAX_PROBE_SECONDS = 30
 _MAX_REMUX_SECONDS = 900
+_MAX_TWITCASTING_PREROLL_BYTES = 512 * 1024
+# Packet count and ordered packet-hash digest for one cycle of the verified
+# TwitCasting preroll, in video (H.264 slices), audio (AAC payload) order.
+_TWITCASTING_PREROLL_BLOCKS = (
+    (60, "1811e8279e77daa53520dc6f5ec855d74e32b0c825441bb8260a36c22b6e5f68"),
+    (95, "d3c422f408a0672b7eb17a95049cb8c3f0fb6beee3725898fe84551150787dbc"),
+)
+
+
+def is_twitcasting_preroll(path: Path) -> bool:
+    """長さやファイル名に頼らず、映像・音声が両方一致する既知の素材を判定する。"""
+    try:
+        if not 0 < _stored_size(path) <= _MAX_TWITCASTING_PREROLL_BYTES:
+            return False
+        binary = media_binary("ffmpeg")
+        if binary is None:
+            return False
+        result = subprocess.run(
+            [
+                binary, "-nostdin", "-v", "error", "-xerror", "-protocol_whitelist", "file",
+                "-f", "mpegts", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0", "-c", "copy",
+                "-bsf:v", "h264_mp4toannexb,filter_units=pass_types=1-5", "-bsf:a", "aac_adtstoasc",
+                "-f", "framehash", "-hash", "sha256", "pipe:1",
+            ],
+            capture_output=True, check=False, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode:
+        return False
+
+    packets: dict[bytes, list[bytes]] = {b"0": [], b"1": []}
+    for line in result.stdout.splitlines():
+        if not line or line.startswith(b"#"):
+            continue
+        fields = line.split(b",", 6)
+        if len(fields) < 6 or fields[0].strip() not in packets or len(fields[5].strip()) != 64:
+            return False
+        packets[fields[0].strip()].append(fields[5].strip())
+
+    loops = set()
+    for stream, (count, expected) in zip(packets.values(), _TWITCASTING_PREROLL_BLOCKS, strict=True):
+        repetitions, extra = divmod(len(stream), count)
+        if not repetitions or extra:
+            return False
+        if any(
+            hashlib.sha256(b"".join(stream[start:start + count])).hexdigest() != expected
+            for start in range(0, len(stream), count)
+        ):
+            return False
+        loops.add(repetitions)
+    return len(loops) == 1
 
 
 @dataclass

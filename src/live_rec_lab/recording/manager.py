@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import stat
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -18,6 +20,7 @@ from live_rec_lab.db.models import (
     CollectionGap,
     RecordingJob,
     RecordingSegment,
+    Streamer,
     StreamSession,
 )
 from live_rec_lab.db.queries import add_event
@@ -25,11 +28,12 @@ from live_rec_lab.db.session import session_scope
 from live_rec_lab.monitoring.state import ACTIVE_RECORDING, OPEN_SESSION
 from live_rec_lab.ops.logging_config import redact
 from live_rec_lab.recording.engines import build_command, run_command
-from live_rec_lab.recording.hls_playlist import HlsMirror, HlsPlaylistError
+from live_rec_lab.recording.hls_playlist import FilteredPlaylist, HlsMirror, HlsPlaylistError
 from live_rec_lab.recording.segments import (
     attempt_is_empty,
     clean_published_staging,
     finalize_segment,
+    is_twitcasting_preroll,
     reserve_segment_path,
     unlink_empty_files,
 )
@@ -236,13 +240,20 @@ class RecordingManager:
         open_segment_id: int | None = None
         capture_error = False
         finish_reason = "source_ended"
+        captured_finite: set[str] = set()
+        retry_finite: str | None = None
+        next_playlist: FilteredPlaylist | None = None
+        awaiting_platform_end = False
         try:
             while not stop.is_set() and retries <= 5:
                 mirror: HlsMirror | None = None
                 try:
                     if platform == "twitcasting":
-                        if retries and refresh_source is not None and (refreshed := await refresh_source()):
-                            self.sources[session_id] = refreshed
+                        if retries and next_playlist is None and refresh_source is not None:
+                            if refreshed := await refresh_source():
+                                self.sources[session_id] = refreshed
+                        if stop.is_set() or not _session_open(session_id):
+                            break
                         media_url = self.sources.get(session_id)
                         if not media_url:
                             _remember_error(job_id, "録画用の公開 URL がありません")
@@ -251,23 +262,41 @@ class RecordingManager:
                             break
                         mirror = HlsMirror(media_url, quality=quality)
                         try:
-                            url = await mirror.ffmpeg_input(stop)
-                            playlist_error = ""
+                            url = await mirror.ffmpeg_input(
+                                stop, captured_finite=captured_finite, retry_finite=retry_finite,
+                                initial_playlist=next_playlist,
+                            )
                         except HlsPlaylistError as exc:
+                            if not awaiting_platform_end or exc.status_code in {401, 403}:
+                                _remember_error(job_id, str(exc))
+                                log.warning(
+                                    str(exc), extra={
+                                        "event": "recording_hls_unavailable", "job_id": job_id,
+                                        "stream_session_id": session_id, "metadata": {"http_status": exc.status_code},
+                                    },
+                                )
+                            if exc.status_code in {401, 403}:
+                                capture_error = True
+                                finish_reason = "source_restricted"
+                                _remember_gap(session_id, "録画元がアクセスを拒否しました")
+                                break
                             url = None
-                            playlist_error = str(exc)
+                        next_playlist = None
                         if not url:
-                            if playlist_error:
-                                _remember_error(job_id, playlist_error)
                             if stop.is_set() or not _session_open(session_id):
                                 break
-                            retried = True
-                            if not _schedule_retry(job_id, session_id, retries):
+                            retried |= not awaiting_platform_end
+                            if not _schedule_retry(job_id, session_id, retries, record_gap=not awaiting_platform_end):
                                 finish_reason = "retry_limit"
                                 break
                             retries += 1
-                            await asyncio.sleep(min(2**retries, 30))
+                            await _wait_to_retry(stop, retries)
                             continue
+                        retry_finite = None
+                        if awaiting_platform_end:
+                            capture_error = True
+                            _remember_gap(session_id, "録画元が一度終了したため次のファイルで再開します")
+                            awaiting_platform_end = False
                     else:
                         url = f"https://www.tiktok.com/@{account}/live"
                     segment_id, temp = await asyncio.to_thread(
@@ -323,6 +352,8 @@ class RecordingManager:
                         returncode=code,
                         stopped=stop.is_set(),
                     )
+                    if mirror is not None:
+                        await mirror.aclose()
                     finalized = asyncio.create_task(asyncio.to_thread(_finalize_open, segment_id, session_id, root))
                     try:
                         outcome = await asyncio.shield(finalized)
@@ -340,14 +371,86 @@ class RecordingManager:
                         _remember_error(job_id, error)
                         _remember_gap(session_id, "録画元がアクセスを拒否しました")
                         break
-                    if not recording_continues(_session_status(session_id), stopped=stop.is_set()):
+                    status = _session_status(session_id)
+                    if mirror is not None:
+                        if mirror.last_error and mirror.last_error.status_code in {401, 403}:
+                            finish_reason = "source_restricted"
+                            capture_error = True
+                            _remember_error(job_id, str(mirror.last_error))
+                            _remember_gap(session_id, "録画元がアクセスを拒否しました")
+                            break
+                        if outcome == "preroll":
+                            next_playlist = mirror.next_playlist
+                            if not recording_continues(status, stopped=stop.is_set()):
+                                finish_reason = "preroll_only"
+                                _remember_error(job_id, "録画用HLSにプリロールしかありませんでした")
+                                break
+                            if next_playlist is not None:
+                                continue
+                            if discarded := mirror.finite_identity():
+                                captured_finite.add(discarded)
+                            if not _schedule_retry(job_id, session_id, retries, record_gap=False):
+                                finish_reason = "retry_limit"
+                                _remember_error(job_id, "再接続の上限までに本編を取得できませんでした")
+                                break
+                            retries += 1
+                            await _wait_to_retry(stop, retries)
+                            continue
+                        resource_failed = mirror.resource_failed()
+                        next_playlist = mirror.next_playlist
+                        retry_hls = (
+                            status == "LIVE" and not stop.is_set() and next_playlist is None
+                            and (not mirror.end_confirmed or resource_failed)
+                        )
+                        capture_complete = (
+                            exit_kind == "ended" and outcome is True and not resource_failed and not mirror.last_error
+                        )
+                        finite = mirror.finite_identity()
+                        if finite is not None:
+                            if capture_complete:
+                                captured_finite.add(finite)
+                            elif exit_kind == "interrupted" or resource_failed or outcome is False:
+                                retry_finite = finite
+                        awaiting_platform_end = (
+                            retry_hls and capture_complete and finite is not None and not mirror.unconfirmed
+                        )
+                        if (
+                            mirror.unconfirmed or mirror.last_error or resource_failed or exit_kind == "interrupted"
+                            or (retry_hls and not awaiting_platform_end)
+                        ):
+                            if mirror.last_error:
+                                reason = str(mirror.last_error)
+                            elif resource_failed:
+                                reason = "HLSの初期化ファイルまたはメディアを取得できませんでした"
+                            elif exit_kind == "interrupted":
+                                reason = "FFmpegが録画中に異常終了しました"
+                            else:
+                                reason = "HLSで本編の終了を確認できません"
+                            _remember_error(job_id, reason)
+                            _remember_gap(session_id, reason)
+                            capture_error = True
+                            log.warning(
+                                reason, extra={
+                                    "event": "recording_hls_incomplete", "job_id": job_id,
+                                    "stream_session_id": session_id,
+                                    "metadata": {
+                                        **mirror.diagnostics(), "returncode": code, "exit_kind": exit_kind,
+                                        "bytes_written": written, "stderr": redact(error),
+                                    },
+                                },
+                            )
+                        if retry_hls and exit_kind in {"ended", "offline"}:
+                            exit_kind = "interrupted"
+                    if not recording_continues(status, stopped=stop.is_set()):
                         break
+                    if next_playlist is not None:
+                        continue
                     action = reconnect_action(
                         kind=exit_kind,
                         bytes_written=written,
                         engine_index=last_index,
                         engine_count=len(engines),
-                        session_live=_session_status(session_id) == "LIVE",
+                        session_live=status == "LIVE",
                     )
                     if action == "wait":
                         preferred = None
@@ -368,12 +471,12 @@ class RecordingManager:
                         preferred = engines[last_index + 1]
                     elif action == "stop":
                         break
-                    if not _schedule_retry(job_id, session_id, retries):
+                    if not _schedule_retry(job_id, session_id, retries, record_gap=not awaiting_platform_end):
                         finish_reason = "retry_limit"
                         break
-                    retried = True
+                    retried |= not awaiting_platform_end
                     retries += 1
-                    await asyncio.sleep(min(2**retries, 30))
+                    await _wait_to_retry(stop, retries)
                 finally:
                     if mirror is not None:
                         await mirror.aclose()
@@ -388,7 +491,9 @@ class RecordingManager:
                 job_id,
                 any_valid=any_valid,
                 manual=manual,
-                failed=(retried or not any_valid) and not manual,
+                failed=(capture_error or retried or not any_valid or (
+                    awaiting_platform_end and self.stop_reasons.get(session_id) != "platform_end"
+                )) and not manual,
                 reason=self.stop_reasons.get(session_id, "internal_cancel"),
             )
             await _resync_captured_session(session_id)
@@ -403,9 +508,24 @@ class RecordingManager:
             self.processes.pop(session_id, None)
             self.sources.pop(session_id, None)
         manual = stop.is_set() and _manual(job_id)
+        if awaiting_platform_end and not manual and (
+            self.stop_reasons.get(session_id) != "platform_end" and _session_status(session_id) != "ENDED"
+        ):
+            capture_error = True
+            reason = "HLSの終了後に配信の終了または本編の再開を確認できませんでした"
+            _remember_gap(session_id, reason)
+            if finish_reason != "source_restricted":
+                _remember_error(job_id, reason)
         _finish(job_id, any_valid=any_valid, manual=manual, failed=capture_error or retried or not any_valid,
                 reason=self.stop_reasons.pop(session_id, finish_reason))
         await _resync_captured_session(session_id)
+
+
+async def _wait_to_retry(stop: asyncio.Event, retries: int) -> None:
+    try:
+        await asyncio.wait_for(stop.wait(), min(2**retries, 30))
+    except TimeoutError:
+        pass
 
 
 async def _resync_captured_session(session_id: int) -> None:
@@ -514,10 +634,54 @@ def _session_open(session_id: int) -> bool:
     return recording_continues(_session_status(session_id), stopped=False)
 
 
-def _finalize_open(segment_id: int | None, session_id: int, root: Path) -> bool | None:
-    """取消で残ったセグメントを確定する。有効なら True、失敗なら False。"""
+def _capture_identity(path: Path) -> tuple[int, int, int, int, int] | None:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _preroll_capture(
+    segment_id: int, session_id: int, root: Path,
+) -> tuple[Path, tuple[int, int, int, int, int]] | None:
+    with session_scope() as db:
+        path = db.scalar(
+            select(RecordingSegment.temp_path)
+            .join(StreamSession, StreamSession.id == RecordingSegment.stream_session_id)
+            .join(Streamer, Streamer.id == StreamSession.streamer_id)
+            .where(
+                RecordingSegment.id == segment_id,
+                RecordingSegment.stream_session_id == session_id,
+                RecordingSegment.validation_status == "pending",
+                RecordingSegment.segment_number.is_(None),
+                RecordingSegment.reserved_path.is_(None),
+                RecordingSegment.file_path.is_(None),
+                Streamer.platform == "twitcasting",
+            )
+        )
+        if not path or db.scalar(
+            select(RecordingSegment.id).where(
+                RecordingSegment.stream_session_id == session_id,
+                RecordingSegment.id < segment_id,
+                RecordingSegment.validation_status == "valid",
+            ).limit(1)
+        ) is not None:
+            return None
+    try:
+        candidate = safe_managed_path(root, Path(path))
+        identity = _capture_identity(candidate)
+        if identity is not None and is_twitcasting_preroll(candidate):
+            return candidate, identity
+    except (ValueError, OSError):
+        return None
+    return None
+
+
+def _finalize_open(segment_id: int | None, session_id: int, root: Path) -> bool | Literal["preroll"] | None:
+    """録画を確定する。既知のプリロールは採番前に破棄する。"""
     if segment_id is None:
         return None
+    preroll = _preroll_capture(segment_id, session_id, root)
     with session_scope(write_lock=True) as db:
         segment = db.get(RecordingSegment, segment_id)
         if segment is None or segment.stream_session_id != session_id:
@@ -528,6 +692,12 @@ def _finalize_open(segment_id: int | None, session_id: int, root: Path) -> bool 
             for path in (segment.temp_path, segment.reserved_path, segment.file_path):
                 if path:
                     safe_managed_path(root, Path(path))
+            if preroll and segment.segment_number is None and not segment.reserved_path and not segment.file_path:
+                candidate, identity = preroll
+                if str(candidate) == segment.temp_path and _capture_identity(candidate) == identity:
+                    candidate.unlink()
+                    db.delete(segment)
+                    return "preroll"
             if attempt_is_empty(segment) and segment.segment_number is None and not segment.reserved_path:
                 unlink_empty_files(segment)
                 db.delete(segment)
@@ -595,7 +765,7 @@ def _note_waiting(job_id: int) -> None:
         job.updated_at = utcnow()
 
 
-def _schedule_retry(job_id: int, session_id: int, retries: int) -> bool:
+def _schedule_retry(job_id: int, session_id: int, retries: int, *, record_gap: bool = True) -> bool:
     """次の再接続を予約する。上限を超えるときは False。"""
     nxt = retries + 1
     with session_scope() as db:
@@ -604,12 +774,13 @@ def _schedule_retry(job_id: int, session_id: int, retries: int) -> bool:
             job.retry_count = nxt
             job.updated_at = utcnow()
             job.status = "FINALIZING" if nxt > 5 else "RECONNECTING"
-        add_gap(
-            db,
-            session_id,
-            "recording",
-            "再接続の上限に達しました" if nxt > 5 else "録画が中断したため次のファイルで再開します",
-        )
+        if record_gap:
+            add_gap(
+                db,
+                session_id,
+                "recording",
+                "再接続の上限に達しました" if nxt > 5 else "録画が中断したため次のファイルで再開します",
+            )
     return nxt <= 5
 
 
