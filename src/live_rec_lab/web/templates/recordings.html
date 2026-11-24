@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% from "components.html" import pager, platform_pick, sessions %}
+{% block content %}
+<form class="filters" action="/recordings" method="get">
+  <label>配信者・タイトル<input name="q" type="search" maxlength="256" value="{{ q }}"></label>
+  {{ platform_pick(platform) }}
+  {% if selected %}
+    <input type="hidden" name="streamer_id" value="{{ streamer_id }}">
+    <span class="filter-label">配信者 {{ selected.display_name or selected.normalized_id }}</span>
+  {% endif %}
+  <button class="button secondary" type="submit">絞り込む</button>
+  {% if q or platform or streamer_id %}<a class="clear-link" href="/recordings">絞り込みを解除</a>{% endif %}
+</form>
+<section class="panel">
+  <div class="section-head"><h2>配信セッション</h2><span class="muted">{{ result.total }}件</span></div>
+  {{ sessions(result['items'], preferences.display_timezone, '対象の配信セッションがありません。', request.url.query) }}
+</section>
+{{ pager(result, request) }}
+{% endblock %}

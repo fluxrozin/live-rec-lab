@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "components.html" import pager, platform_pick %}
+{% block actions %}<button type="button" class="button primary" data-open="add-streamer">配信者を追加</button>{% endblock %}
+{% block content %}
+<form class="filters" action="/streamers" method="get">
+  <label>配信者名・ID<input type="search" name="q" maxlength="256" value="{{ q }}"></label>
+  {{ platform_pick(platform) }}
+  <button class="button secondary" type="submit">絞り込む</button>
+  {% if q or platform %}<a class="clear-link" href="/streamers">絞り込みを解除</a>{% endif %}
+</form>
+<section class="panel">
+  <div class="section-head"><h2>登録済みの配信者</h2><span class="muted">{{ result.total }}件</span></div>
+  {% if result['items'] %}
+  <div class="table-wrap">
+    <table><thead><tr><th scope="col">配信者</th><th scope="col">サービス</th><th scope="col">監視</th><th scope="col">録画</th><th scope="col">コメント</th><th scope="col">操作</th></tr></thead>
+    <tbody>
+    {% for row in result['items'] %}
+      <tr>
+        <td><strong>{{ row.display_name }}</strong><span class="sub">{{ row.normalized_id }}</span></td>
+        <td>{{ row.platform | platform }}</td>
+        <td>{{ '有効' if row.monitoring_enabled else '無効' }}</td>
+        <td>{{ '有効' if row.recording_enabled else '無効' }}</td>
+        <td>{{ '有効' if row.comments_enabled else '無効' }}</td>
+        <td><div class="row-actions">
+          <a href="/recordings?streamer_id={{ row.id }}">履歴</a>
+          <button class="link-button" type="button" data-edit="{{ row.id }}" data-label="{{ row.display_name }}"
+            data-display="{{ row.raw_display_name or '' }}" data-monitoring="{{ row.monitoring_enabled | lower }}"
+            data-recording="{{ row.recording_enabled | lower }}" data-comments="{{ row.comments_enabled | lower }}">編集</button>
+          <button class="link-button danger" type="button" data-archive="{{ row.id }}" data-label="{{ row.display_name }}">削除</button>
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody></table>
+  </div>
+  {% else %}<p class="empty">{{ '条件に一致する配信者がいません。' if q or platform else '配信者はまだ登録されていません。' }}</p>{% endif %}
+</section>
+{{ pager(result, request) }}
+
+{% macro streamer_fields() %}
+  <label>表示名<input name="display_name" maxlength="100" autocomplete="off"></label>
+  <fieldset class="switch-fieldset"><legend>収集設定</legend>
+    <label><input type="checkbox" name="monitoring_enabled" checked>監視</label>
+    <label><input type="checkbox" name="recording_enabled" checked>録画</label>
+    <label><input type="checkbox" name="comments_enabled" checked>コメント</label>
+  </fieldset>
+{% endmacro %}
+<dialog id="add-streamer" aria-labelledby="add-streamer-title">
+  <form data-api="/api/v1/streamers" data-method="POST" data-success="配信者を追加しました。" action="#" method="dialog">
+    <h2 id="add-streamer-title">配信者を追加</h2>
+    <label>サービス<select name="platform"><option value="tiktok">TikTok LIVE</option><option value="twitcasting">ツイキャス</option></select></label>
+    <label>IDまたはプロフィールURL<input name="target" maxlength="2048" required autofocus autocomplete="off"></label>
+    {{ streamer_fields() }}
+    <p class="form-message" role="status" hidden></p>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close>キャンセル</button><button type="submit" class="button primary">追加</button></div>
+  </form>
+</dialog>
+<dialog id="edit-streamer" aria-labelledby="edit-streamer-title">
+  <form data-method="PATCH" data-success="配信者の設定を保存しました。" action="#" method="dialog">
+    <h2 id="edit-streamer-title">配信者を編集</h2>
+    <p class="dialog-target muted" data-target-label></p>
+    {{ streamer_fields() }}
+    <p class="form-message" role="status" hidden></p>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close>キャンセル</button><button type="submit" class="button primary">保存</button></div>
+  </form>
+</dialog>
+<dialog id="archive-streamer" aria-labelledby="archive-streamer-title">
+  <form data-method="DELETE" data-success="配信者を一覧から削除しました。" action="#" method="dialog">
+    <h2 id="archive-streamer-title">配信者を削除</h2>
+    <p class="dialog-target"><strong data-target-label></strong> を一覧から削除します。取得済みの履歴とファイルは保持されます。</p>
+    <label class="confirm"><input name="confirmed" type="checkbox" required>対象の配信者を確認しました</label>
+    <p class="form-message" role="status" hidden></p>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close autofocus>キャンセル</button><button type="submit" class="button destructive">削除</button></div>
+  </form>
+</dialog>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% macro state(kind, value) %}
+  {% set label, tone = presentation_status(kind, value) %}
+  <span class="state {{ tone }}"><span class="status-dot" aria-hidden="true"></span>{{ label }}</span>
+{% endmacro %}
+
+{% macro time_value(value, timezone) %}
+  {% if value %}<time datetime="{{ value }}">{{ value | local_time(timezone) }}</time>{% else %}<span class="muted">未確認</span>{% endif %}
+{% endmacro %}
+
+{% macro platform_pick(value) %}
+  <label>サービス
+    <select name="platform">
+      <option value="">すべて</option>
+      <option value="tiktok"{% if value == 'tiktok' %} selected{% endif %}>TikTok LIVE</option>
+      <option value="twitcasting"{% if value == 'twitcasting' %} selected{% endif %}>ツイキャス</option>
+    </select>
+  </label>
+{% endmacro %}
+
+{% macro pager(result, request) %}
+  {% if result.page > 1 or result.has_next %}
+  <nav class="pagination" aria-label="ページ">
+    {% if result.page > 1 %}<a href="{{ request.url.include_query_params(page=result.page - 1) }}">前へ</a>{% endif %}
+    <span>{{ result.page }}ページ</span>
+    {% if result.has_next %}<a href="{{ request.url.include_query_params(page=result.page + 1) }}">次へ</a>{% endif %}
+  </nav>
+  {% endif %}
+{% endmacro %}
+
+{% macro sessions(rows, timezone, empty, back_query="") %}
+  {% if rows %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">配信者・タイトル</th><th scope="col">配信</th><th scope="col">録画</th><th scope="col">コメント</th><th scope="col">開始</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a href="/recordings/{{ row.id }}{% if back_query %}?back_query={{ back_query | urlencode }}{% endif %}">{{ row.display_name or row.normalized_id }}</a><span class="sub">{{ row.platform | platform }} · {{ row.title }}</span></td>
+        <td>{{ state('stream', row.stream_state) }}</td>
+        <td>{{ state('recording', row.recording_state) }}</td>
+        <td>{{ state('comment', row.comment_state) }}</td>
+        <td>{{ time_value(row.started_at, timezone) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="empty">{{ empty }}</p>
+  {% endif %}
+{% endmacro %}

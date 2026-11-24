@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "components.html" import state, time_value %}
+{% block breadcrumb %}<p class="breadcrumb"><a href="/recordings{% if back_query %}?{{ back_query }}{% endif %}">録画履歴</a> <span aria-hidden="true">/</span> 詳細</p>{% endblock %}
+{% block content %}
+<section class="panel detail-summary">
+  <div class="section-head"><h2>{{ session.title }}</h2></div>
+  <div class="detail-identity">{{ session.display_name or session.normalized_id }} · {{ session.platform | platform }}</div>
+  <dl class="metrics detail-metrics">
+    <div><dt>開始</dt><dd>{{ time_value(session.started_at, preferences.display_timezone) }}</dd></div>
+    <div><dt>配信</dt><dd>{{ state('stream', session.stream_state) }}</dd></div>
+    <div><dt>録画</dt><dd>{{ state('recording', session.recording_state) }}</dd></div>
+    <div><dt>コメント</dt><dd>{{ state('comment', session.comment_state) }}</dd></div>
+  </dl>
+  {% if expiry %}<p class="panel-note">{{ 'コメントは期限削除済みです。' if expiry.state == 'expired' else 'コメントは期限処理の照合中です。' }}</p>{% endif %}
+  <div class="panel-links">
+    <a href="/comments?mode=session&amp;session_id={{ session.id }}">配信のコメントを表示</a>
+    <a href="/speech/cues?session_id={{ session.id }}">発話本文を表示</a>
+    <a href="/logs?q={{ session.source_id | urlencode }}">関連ログを表示</a>
+  </div>
+</section>
+<section class="panel separated">
+  <div class="section-head"><h2>録画セグメントと字幕</h2></div>
+  {% if outputs %}
+    <div class="table-wrap">
+      <table><thead><tr><th scope="col">録画ファイル</th><th scope="col">媒体長</th><th scope="col">コメントSRT</th><th scope="col">音声SRT</th><th scope="col">統合ASS</th></tr></thead>
+        <tbody>{% for output in outputs %}<tr>
+          <td>{{ output.video_name }}<span class="sub">{{ '保存済み' if output.available else '世代を確認できません' }}</span></td>
+          <td>{{ '%.2f' | format(output.duration / 1000) }} 秒</td>
+          <td>{{ state('subtitle', output.statuses.get('comment', session.subtitle_state)) }}</td>
+          <td>{{ state('subtitle', output.statuses.get('speech', 'not_started')) }}</td>
+          <td>{{ state('subtitle', output.statuses.get('ass', 'not_started')) }}</td>
+        </tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  {% else %}<p class="empty">確定した録画セグメントがありません。</p>{% endif %}
+</section>
+{% endblock %}

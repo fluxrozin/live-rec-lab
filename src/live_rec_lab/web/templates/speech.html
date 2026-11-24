@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "components.html" import pager, platform_pick, state %}
+{% block actions %}<a class="button secondary" href="/speech/cues">発話本文を検索</a>{% endblock %}
+{% block content %}
+<form class="filters" action="/speech" method="get">
+  <label>配信者・タイトル<input type="search" name="q" maxlength="256" value="{{ q }}"></label>
+  {{ platform_pick(platform) }}
+  <button type="submit" class="button secondary">絞り込む</button>
+</form>
+<section class="panel">
+  <div class="section-head"><h2>セッション別の字幕</h2><span class="muted">{{ result.total }}件</span></div>
+  {% if result['items'] %}
+  <div class="table-wrap"><table>
+    <thead><tr><th scope="col">配信</th><th scope="col">セグメント</th><th scope="col">音声SRT</th><th scope="col">統合ASS</th><th scope="col">最新の音声試行</th><th scope="col">操作</th></tr></thead>
+    <tbody>{% for row in result['items'] %}
+      {% for segment in row.segments or [none] %}
+      <tr>
+        <td><a href="/recordings/{{ row.id }}">{{ row.title }}</a><span class="sub">{{ row.display_name or row.normalized_id }} · {{ row.platform | platform }}</span></td>
+        <td>{{ segment.number if segment else '確定媒体なし' }}</td>
+        <td>{{ state('subtitle', segment.statuses.get('speech', 'not_started') if segment else 'blocked') }}</td>
+        <td>{{ state('subtitle', segment.statuses.get('ass', 'not_started') if segment else 'blocked') }}</td>
+        <td>
+          {% if segment and segment.speech_attempt %}
+            {% set job = segment.speech_attempt %}
+            {% set labels = {'queued': '待機', 'running': '処理中', 'completed': '完了', 'no_speech': '発話なし', 'not_applicable': '音声なし', 'blocked': '保留', 'failed': '失敗', 'needs_review': '要確認', 'interrupted': '中断'} %}
+            {% set reasons = {'model_unavailable': 'ローカルモデルなし・不完全', 'inference_unavailable': '推論環境を利用できません', 'input_generation_changed': '動画が変わりました', 'speech_publication_failed': '音声SRTを公開できません', 'ass_publication_failed': '統合ASSを公開できません', 'ass_retention_blocked': 'コメント期限処理中または削除済み', 'ass_partial': '統合ASSに未取得部分があります', 'inference_error': '推論または音声抽出に失敗', 'worker_stopped': '処理が中断されました'} %}
+            {{ labels.get(job.state, '未確認') }}<span class="sub">{{ job.device | upper }} · {{ job.model }}</span>
+            {% if job.reason in reasons %}<span class="sub">{{ reasons[job.reason] }}</span>{% endif %}
+          {% else %}<span class="muted">未投入</span>{% endif %}
+        </td>
+        <td>
+          {% if segment and segment.statuses.get('speech') == 'completed' %}<a href="/speech/cues?session_id={{ row.id }}">発話本文</a><span class="sub">{{ segment.speech_origin }}</span>{% endif %}
+          {% if segment and segment.available and row.stream_state == 'ended' and row.recording_state in ['completed', 'partial', 'cancelled'] and not (segment.speech_attempt and segment.speech_attempt.state in ['queued', 'running']) %}
+          <form data-api="/api/v1/segments/{{ segment.id }}/speech" data-method="POST" data-success="音声ジョブを待機列に追加しました。" action="#" method="dialog">
+            <button class="link-button" type="submit">{{ '再生成を予約' if segment.statuses.get('speech') == 'completed' else '生成を予約' }}</button><p class="form-message" role="status" hidden></p>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="empty">表示できる配信セッションがありません。</p>{% endif %}
+</section>
+{{ pager(result, request) }}
+{% endblock %}

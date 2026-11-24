@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "components.html" import pager, sessions, time_value %}
+{% block content %}
+<div class="view-tabs" aria-label="閲覧方法">
+  <a href="/comments?mode=session"{% if mode == 'session' %} aria-current="true"{% endif %}>配信別</a>
+  <a href="/comments?mode=all"{% if mode == 'all' %} aria-current="true"{% endif %}>横断検索</a>
+</div>
+{% if session %}<p class="context-line"><a href="/recordings/{{ session.id }}">{{ session.title }}</a> · {{ session.platform | platform }}</p>{% endif %}
+<form class="filters" action="/comments" method="get">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  {% if session %}<input type="hidden" name="session_id" value="{{ session.id }}">{% endif %}
+  <label>{{ '配信者・タイトル' if listing else '本文・投稿者' }}<input name="q" type="search" maxlength="256" value="{{ q }}"></label>
+  {% if not listing %}
+    <label>時刻順<select name="order"><option value="asc"{% if order == 'asc' %} selected{% endif %}>古い順</option><option value="desc"{% if order == 'desc' %} selected{% endif %}>新しい順</option></select></label>
+  {% endif %}
+  <button class="button secondary" type="submit">検索</button>
+</form>
+<section class="panel">
+  <div class="section-head"><h2>{{ '配信セッション' if listing else '取得済みコメント' }}</h2>{% if not expiry %}<span class="muted">{{ result.total }}件</span>{% endif %}</div>
+  {% if expiry %}
+    <p class="empty">{{ 'コメントは期限削除済みです。' if expiry.state == 'expired' else 'コメントは期限処理の照合中です。' }}</p>
+  {% elif result['items'] %}
+  <div class="table-wrap">
+    {% if listing %}
+    <table><thead><tr><th scope="col">配信</th><th scope="col">サービス</th><th scope="col">開始</th><th scope="col">関連情報</th></tr></thead>
+    <tbody>{% for row in result['items'] %}<tr>
+      <td><a href="/comments?mode=session&amp;session_id={{ row.id }}">{{ row.title }}</a><span class="sub">{{ row.display_name or row.normalized_id }}</span></td>
+      <td>{{ row.platform | platform }}</td><td>{{ time_value(row.started_at, preferences.display_timezone) }}</td>
+      <td><a href="/recordings/{{ row.id }}">録画詳細</a></td>
+    </tr>{% endfor %}</tbody></table>
+    {% else %}
+    <table><thead><tr><th scope="col">時刻</th><th scope="col">投稿者</th><th scope="col">本文</th><th scope="col">配信</th></tr></thead>
+    <tbody>{% for row in result['items'] %}<tr>
+      <td>{{ time_value(row.posted_at or row.received_at, preferences.display_timezone) }}{% if not row.posted_at %}<span class="sub">受信時刻</span>{% endif %}</td>
+      <td>{% if row.is_anonymous %}匿名{{ row.anonymous_number or '' }}{% else %}{{ row.author_name or row.author_id or '投稿者不明' }}{% if row.author_id and row.author_name %}<span class="sub">@{{ row.author_id }}</span>{% endif %}{% endif %}</td>
+      <td class="multiline">{{ row.body or '本文なし' }}</td><td><a href="/recordings/{{ row.session_id }}">{{ row.session_title }}</a></td>
+    </tr>{% endfor %}</tbody></table>
+    {% endif %}
+  </div>
+  {% else %}<p class="empty">{{ '条件に一致するコメントがありません。' if q else '表示できる取得済みコメントがありません。' }}</p>{% endif %}
+</section>
+{{ pager(result, request) }}
+{% endblock %}

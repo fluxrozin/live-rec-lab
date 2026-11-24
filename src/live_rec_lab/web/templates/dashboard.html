@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "components.html" import sessions %}
+{% block content %}
+<div class="dashboard-layout">
+  <div class="dashboard-main">
+    <p class="data-scope">隔離環境の集計<span class="separator">／</span>実配信は未観測</p>
+    <div id="live-overview" data-refresh-seconds="{{ preferences.refresh_seconds }}">
+      {% include "dashboard-live.html" %}
+    </div>
+    <p id="refresh-notice" class="muted update-notice" role="status" hidden>表示を更新できません。最後に取得した内容を表示しています。</p>
+    <section class="panel recent">
+      <div class="section-head">
+        <h2>最近の録画</h2>
+        <a href="/recordings">録画履歴へ</a>
+      </div>
+      {{ sessions(recent, preferences.display_timezone, '記録された配信はありません。') }}
+    </section>
+  </div>
+  <aside class="dashboard-rail" aria-label="診断と保存容量">
+    {% if alerts %}
+    <div class="warning"><strong>確認が必要なセッション {{ alerts }}件</strong><a href="/logs?level=ERROR">関連ログへ</a></div>
+    {% endif %}
+    <section class="panel">
+      <div class="section-head"><h2>保存容量</h2><a href="/system#storage">詳細</a></div>
+      <dl class="metrics">
+        <div><dt>隔離保存先の空き</dt><dd>{{ capacity_free | size }}</dd></div>
+        <div><dt>ボリューム総容量</dt><dd>{{ capacity_total | size }}</dd></div>
+        <div><dt>通常保存先</dt><dd>未確認</dd></div>
+      </dl>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>今日の取得</h2></div>
+      <dl class="metrics">
+        <div><dt>本日開始・保存済み</dt><dd>{{ today_recordings }}件</dd></div>
+        <div><dt>コメント</dt><dd>{{ today_comments }}件</dd></div>
+        <div><dt>字幕結果</dt><dd><a href="/speech">音声字幕へ</a></dd></div>
+      </dl>
+    </section>
+  </aside>
+</div>
+<footer class="environment-strip"><strong>実行環境</strong><span>隔離fixture</span><a href="/system">構成と診断</a></footer>
+{% endblock %}

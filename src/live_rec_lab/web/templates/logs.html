@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "components.html" import pager, time_value %}
+{% block content %}
+<form class="filters" method="get" action="/logs">
+  <label>本文・相関ID<input name="q" type="search" maxlength="256" value="{{ q }}"></label>
+  <label>出力元<select name="component"><option value="">すべて</option>{% for value in components %}<option{% if value == component %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+  <label>重要度<select name="level"><option value="">すべて</option>{% for value in levels %}<option{% if value == level %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+  <button class="button secondary" type="submit">検索</button>
+  {% if q or component or level %}<a href="/logs" class="clear-link">絞り込みを解除</a>{% endif %}
+</form>
+{% if availability == 'partial' %}<div class="warning">読み取れた範囲のログを表示しています。</div>{% endif %}
+<section class="panel">
+  <div class="section-head"><h2>イベント</h2>{% if availability != 'unavailable' %}<span class="muted">{{ result.total }}件</span>{% endif %}</div>
+  {% if result['items'] %}
+  <div class="table-wrap"><table><thead><tr><th scope="col">発生時刻</th><th scope="col">重要度</th><th scope="col">出力元</th><th scope="col">イベントと詳細</th><th scope="col">関連配信</th></tr></thead>
+  <tbody>{% for row in result['items'] %}
+  <tr>
+    <td>{{ time_value(row.timestamp, preferences.display_timezone) }}</td>
+    <td class="{{ 'danger' if row.level == 'ERROR' else 'warning-text' if row.level == 'WARNING' else 'muted' }}">{{ row.level }}</td>
+    <td>{{ row.component }}</td>
+    <td><details><summary>{{ row.event }}</summary><p class="sub">{{ row.correlation_id }}</p>{% if row.detail %}<pre>{{ row.detail }}</pre>{% endif %}</details></td>
+    <td>{% if row.correlation_id in sessions %}<a href="/recordings/{{ sessions[row.correlation_id] }}">録画詳細</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+  </tr>
+  {% endfor %}</tbody></table></div>
+  {% else %}<p class="empty">{{ 'ログを取得できません。' if availability == 'unavailable' else '条件に一致するログがありません。' if q or component or level else 'ログはまだ記録されていません。' }}</p>{% endif %}
+</section>
+{{ pager(result, request) }}
+{% endblock %}

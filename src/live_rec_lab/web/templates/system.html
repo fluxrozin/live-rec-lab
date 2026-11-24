@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "components.html" import time_value %}
+{% block content %}
+<div class="two-columns">
+  <section class="panel">
+    <div class="section-head"><h2>機能別の状態</h2><a href="/logs?level=ERROR">エラーログへ</a></div>
+    <dl class="metrics">
+      <div><dt>データベース</dt><dd>{{ '整合性確認済み' if diagnosis.database.integrity == 'ok' else '要確認' }}</dd></div>
+      <div><dt>セッション</dt><dd>{{ diagnosis.database.sessions }}件</dd></div>
+      <div><dt>外部配信接続</dt><dd>停止（隔離）</dd></div>
+      <div><dt>実音声推論</dt><dd>未検証</dd></div>
+      <div><dt>待ち受け</dt><dd>127.0.0.1:{{ port }}</dd></div>
+      <div><dt>診断時点</dt><dd>{{ time_value(diagnosis.as_of, preferences.display_timezone) }}</dd></div>
+    </dl>
+  </section>
+  <section class="panel" id="storage">
+    <div class="section-head"><h2>保存先</h2></div>
+    <dl class="metrics">
+      <div><dt>使用領域</dt><dd>隔離用Linux領域</dd></div>
+      <div><dt>空き容量</dt><dd>{{ capacity_free | size }}</dd></div>
+      <div><dt>ボリューム総容量</dt><dd>{{ capacity_total | size }}</dd></div>
+      <div><dt>Windows側の保存先</dt><dd>未確認</dd></div>
+    </dl>
+  </section>
+</div>
+<section class="panel separated">
+  <div class="section-head"><h2>メディアツール</h2></div>
+  <dl class="metrics">
+    {% for tool, value in diagnosis.tools.items() %}
+    <div><dt>{{ tool }}</dt><dd>{{ value if value is string else '取得できません' }}</dd></div>
+    {% endfor %}
+  </dl>
+</section>
+{% endblock %}

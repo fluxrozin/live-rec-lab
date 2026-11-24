@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="settings-layout">
+  <nav class="settings-nav panel" aria-label="設定カテゴリ">
+    <a href="#monitor">監視</a><a href="#storage">録画・保存</a><a href="#comments">コメント・SRT</a>
+    <a href="#speech">音声字幕</a><a href="#display">表示</a><a href="#advanced">詳細設定</a>
+  </nav>
+  <div class="settings-sections">
+    <section class="panel" id="monitor"><div class="section-head"><h2>監視</h2></div>
+      <dl class="metrics"><div><dt>外部配信の監視</dt><dd>停止（隔離）</dd></div><div><dt>サービス共有上限</dt><dd>TikTok LIVE 10回／分 · ツイキャス 60回／分</dd></div></dl>
+    </section>
+    <section class="panel" id="storage"><div class="section-head"><h2>録画・保存</h2></div>
+      <dl class="metrics"><div><dt>保存先</dt><dd>隔離専用のLinux領域</dd></div><div><dt>容量の確認</dt><dd><a href="/system#storage">システム状態へ</a></dd></div></dl>
+    </section>
+    <section class="panel" id="comments"><div class="section-head"><h2>コメント・SRT</h2></div>
+      <dl class="metrics"><div><dt>コメント字幕の表示秒数</dt><dd>4秒</dd></div><div><dt>自動期限処理</dt><dd>停止（隔離）</dd></div></dl>
+    </section>
+    <section class="panel" id="speech"><div class="section-head"><h2>音声字幕</h2></div>
+      <form class="preferences-form" data-api="/api/v1/settings/speech" data-method="PUT" data-success="音声字幕の設定を保存しました。" action="#" method="dialog">
+        <input type="hidden" name="revision" value="{{ audio.revision }}">
+        <label>自動投入 <input type="checkbox" name="enabled"{% if audio.enabled %} checked{% endif %}></label>
+        <label>モデル<select name="model">
+          {% for model in ['large-v3', 'large-v3-turbo'] %}<option{% if model == audio.model %} selected{% endif %}>{{ model }}</option>{% endfor %}
+        </select></label>
+        <label>認識言語<input name="language" value="{{ audio.language }}" maxlength="3" required pattern="[a-z]{2,3}" autocomplete="off"></label>
+        <label>実行デバイス<select name="device">
+          <option value="cuda"{% if audio.device == 'cuda' %} selected{% endif %}>GPU（CUDA）</option>
+          <option value="cpu"{% if audio.device == 'cpu' %} selected{% endif %}>CPU</option>
+        </select></label>
+        <p class="muted">新規ジョブから適用します。ローカルモデルと実行環境の確認はジョブ処理時に行います。</p>
+        <p class="form-message" role="status" hidden></p>
+        <div class="form-actions"><button type="submit" class="button primary">音声字幕設定を保存</button></div>
+      </form>
+    </section>
+    <section class="panel" id="display"><div class="section-head"><h2>表示</h2></div>
+      <form class="preferences-form" id="display-preferences" data-api="/api/v1/settings/display" data-method="PUT" data-success="表示設定を保存しました。" action="#" method="dialog">
+        <input type="hidden" name="revision" value="{{ preferences.revision }}">
+        <label>フォント<select name="font">
+          <option value="windows"{% if preferences.font == 'windows' %} selected{% endif %}>Windows標準</option>
+          <option value="noto"{% if preferences.font == 'noto' %} selected{% endif %}>Noto Sans JP</option>
+        </select></label>
+        <div id="font-preview" class="font-preview" data-font="{{ preferences.font }}">配信中 · LiveRecorder 123 · 2026/11/24 21:18</div>
+        <label>表示タイムゾーン<input name="display_timezone" value="{{ preferences.display_timezone }}" maxlength="100" required autocomplete="off"></label>
+        <label>自動更新間隔（秒）<input name="refresh_seconds" type="number" min="1" max="9007199254740991" step="1" value="{{ preferences.refresh_seconds }}" required></label>
+        <p class="form-message" role="status" hidden></p>
+        <div class="form-actions"><button type="submit" class="button primary">表示設定を保存</button><button type="reset" class="button secondary">元に戻す</button></div>
+      </form>
+    </section>
+    <section class="panel" id="advanced"><div class="section-head"><h2>詳細設定</h2></div>
+      <dl class="metrics"><div><dt>待ち受けポート</dt><dd>{{ port }}</dd></div><div><dt>接続範囲</dt><dd>ループバック</dd></div></dl>
+    </section>
+  </div>
+</div>
+{% endblock %}

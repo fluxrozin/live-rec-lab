@@ -1,0 +1,16 @@
+{% from "components.html" import sessions %}
+<div data-live-fragment data-observed="{{ now }}" data-recording="{{ (counts.recording > 0) | lower }}">
+  <dl class="kpis">
+    <div><dt>監視対象</dt><dd>{{ counts.monitored }}</dd></div>
+    <div><dt>配信中</dt><dd class="live">{{ counts.live }}</dd></div>
+    <div><dt>録画中</dt><dd class="recording">{{ counts.recording }}</dd></div>
+    <div><dt>コメント収集中</dt><dd class="comment">{{ counts.collecting }}</dd></div>
+  </dl>
+  <section class="panel live-sessions" aria-labelledby="live-sessions">
+    <div class="section-head">
+      <h2 id="live-sessions">稼働中セッション</h2>
+      <span class="muted"><time datetime="{{ now }}">{{ now | local_time(preferences.display_timezone) }}</time></span>
+    </div>
+    {{ sessions(running, preferences.display_timezone, '稼働中の隔離セッションはありません。') }}
+  </section>
+</div>
