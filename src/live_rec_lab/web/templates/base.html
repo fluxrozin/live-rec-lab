@@ -9,25 +9,31 @@
   <script src="/static/js/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">メインコンテンツへ移動</a>
   <div class="shell">
     <aside class="side">
-      <p class="brand{% if recording_active %} recording-brand{% endif %}" data-recording="{{ 'yes' if recording_active else 'no' }}">LiveRecorder</p>
+      <div class="brand{% if recording_active %} recording-brand{% endif %}" data-recording="{{ 'yes' if recording_active else 'no' }}">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>LiveRecorder<small class="brand-status">{{ '録画中' if recording_active else '' }}</small></span>
+      </div>
       <nav aria-label="メイン">
         {% for group, links in nav %}
-        <p class="group">{{ group }}</p>
-        {% for href, label in links %}
-        <a href="{{ href }}" {% if active_path == href %}aria-current="page"{% endif %}>{{ label }}</a>
-        {% endfor %}
+        <div class="nav-group">
+          <p class="group">{{ group }}</p>
+          {% for href, label in links %}
+          <a href="{{ href }}" {% if active_path == href %}aria-current="page"{% endif %}>{{ label }}</a>
+          {% endfor %}
+        </div>
         {% endfor %}
       </nav>
     </aside>
-    <div class="main">
+    <main id="main-content" class="main" tabindex="-1">
       <header class="top">
-        <h1>{{ title }}</h1>
-        <p class="asof">最終取得 <time id="display-asof">{{ asof }}</time></p>
+        <p class="asof"><span id="display-freshness">最終取得</span> <time id="display-asof">{{ asof }}</time></p>
+        <div class="page-heading">{% block heading %}<h1>{{ title }}</h1>{% endblock %}</div>
       </header>
       {% block content %}{% endblock %}
-    </div>
+    </main>
   </div>
 </body>
 </html>

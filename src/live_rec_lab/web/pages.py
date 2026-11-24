@@ -6,15 +6,18 @@ import hashlib
 import json
 import os
 import shutil
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
-from urllib.parse import urlencode
+from typing import Annotated
+from urllib.parse import parse_qsl, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BeforeValidator, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -62,6 +65,7 @@ from live_rec_lab.web.security import tokens_match
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
+PLATFORM_NAMES = {"tiktok": "TikTok LIVE", "twitcasting": "ツイキャス"}
 NAV = [
     ("運用・データ", [
         ("/", "ダッシュボード"),
@@ -79,6 +83,13 @@ NAV = [
 
 def _checked(value: str | None) -> bool:
     return value in {"1", "on", "true", "yes"}
+
+
+def _empty_filter(value: object) -> object:
+    return None if value == "" else value
+
+
+OptionalFilterID = Annotated[Annotated[int, Field(ge=1, le=2**63 - 1)] | None, BeforeValidator(_empty_filter)]
 
 
 def _fmt(value: datetime | None, tzname: str) -> str:
@@ -127,7 +138,7 @@ def _render(request: Request, name: str, context: dict, status: int = 200) -> HT
 def dashboard(request: Request) -> HTMLResponse:
     with session_scope() as db:
         context = _shell(request, db, "ダッシュボード", "未取得")
-        context.update(_metrics(db, str(context["settings"]["timezone"])))
+        context.update(_metrics(db, context["settings"]))
         return _render(request, "dashboard.html", context)
 
 
@@ -135,14 +146,15 @@ def dashboard(request: Request) -> HTMLResponse:
 def dashboard_partial(request: Request) -> HTMLResponse:
     with session_scope() as db:
         settings = load_settings(db)
-        context = {"request": request, **_metrics(db, str(settings["timezone"]))}
+        context = {"request": request, **_metrics(db, settings)}
         response = _render(request, "partials/dashboard.html", context)
         response.headers["Cache-Control"] = "no-store"
         return response
 
 
-def _metrics(db: Session, tzname: str) -> dict:
+def _metrics(db: Session, settings: dict) -> dict:
     now = datetime.now(UTC)
+    tzname = str(settings["timezone"])
     start_utc = now.astimezone(ZoneInfo(tzname)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
     streamers = select(func.count()).select_from(Streamer).where(Streamer.monitoring_enabled.is_(True))
     monitored = db.scalar(streamers)
@@ -155,7 +167,7 @@ def _metrics(db: Session, tzname: str) -> dict:
         select(StreamSession).where(
             select(RecordingJob.id).where(
                 RecordingJob.stream_session_id == StreamSession.id,
-                RecordingJob.status.in_(("COMPLETED", "PARTIAL", "CANCELLED")),
+                RecordingJob.status.in_(("COMPLETED", "PARTIAL", "CANCELLED", "FAILED")),
             ).exists()
         ).order_by(StreamSession.detected_at.desc()).limit(8)
     ))
@@ -163,13 +175,23 @@ def _metrics(db: Session, tzname: str) -> dict:
         select(SystemEvent).where(SystemEvent.severity.in_(("warning", "error")))
         .order_by(SystemEvent.created_at.desc()).limit(4)
     )
-    root = str(load_settings(db)["recording_root"])
+    root = str(settings["recording_root"])
+    available_segments = RecordingSegment.validation_status == "valid", RecordingSegment.files_deleted_at.is_(None)
+    count, known_sizes, total_size = db.execute(
+        select(func.count(), func.count(RecordingSegment.file_size), func.sum(RecordingSegment.file_size))
+        .where(*available_segments)
+    ).one()
     free = "未取得"
+    capacity_issue = ""
     if root:
         try:
-            free = f"{shutil.disk_usage(root).free / (1024 ** 3):.1f} GiB"
+            free_bytes = shutil.disk_usage(root).free
+            free = f"{free_bytes / (1024 ** 3):.1f} GiB"
+            if free_bytes < settings["min_free_bytes"]:
+                capacity_issue = "保存先の空き容量が最低設定値を下回っています。"
         except OSError:
             free = "取得できません"
+            capacity_issue = "保存先の空き容量を取得できません。"
     credentials = load_secrets()
     secrets = (credentials.twitcasting_client_id, credentials.twitcasting_client_secret, credentials.sign_api_key)
     return {
@@ -188,14 +210,30 @@ def _metrics(db: Session, tzname: str) -> dict:
         "today_comments": db.scalar(
             select(func.count()).select_from(Comment).where(Comment.received_at >= start_utc)
         ),
-        "total_size": db.scalar(select(func.sum(RecordingSegment.file_size))
-                                .where(RecordingSegment.validation_status == "valid")),
+        "total_size": (total_size or 0) if count == known_sizes else None,
         "free_space": free,
+        "capacity_issue": capacity_issue,
         "asof": _fmt(now, tzname),
-        "sessions": [_session_row(db, item, tzname) for item in sessions],
+        "sessions": [
+            {**_session_row(db, item, tzname), "elapsed": _elapsed(item.platform_started_at, now)}
+            for item in sessions
+        ],
         "recent": [_session_row(db, item, tzname) for item in recent],
         "events": [_event_summary(item, tzname, secrets) for item in events],
     }
+
+
+def _elapsed(start: datetime | None, now: datetime) -> str:
+    if start is None:
+        return ""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    seconds = int((now - start).total_seconds())
+    if start > now:
+        return ""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02}:{minutes:02}:{seconds:02}"
 
 
 def _session_comments(db: Session, item: StreamSession) -> dict:
@@ -229,14 +267,22 @@ def _session_row(db: Session, item: StreamSession, tzname: str) -> dict:
     latest = db.scalar(select(RecordingJob).where(RecordingJob.stream_session_id == item.id)
                        .order_by(RecordingJob.id.desc()).limit(1))
     visible = summary["recording_status"]
+    status = SESSION_LABELS.get(item.status, item.status)
+    if item.status == "LIVE" and streamer and streamer.live_status in {"UNKNOWN", "ERROR", "DISABLED"}:
+        status = LIVE_LABELS[streamer.live_status]
     return {
         **summary,
         "id": item.id,
-        "who": streamer.display_name if streamer else "未取得",
+        "who": (streamer.display_name or streamer.platform_user_id) if streamer else "未取得",
         "platform": streamer.platform if streamer else "",
+        "platform_name": PLATFORM_NAMES.get(streamer.platform, streamer.platform) if streamer else "未取得",
         "title": item.title or "無題",
-        "status": "終了未確認" if item.status == "ENDED_UNCONFIRMED" else SESSION_LABELS.get(item.status, item.status),
-        "recording": "一部取得・要確認" if visible == "PARTIAL" else RECORDING_LABELS.get(visible, "未録画"),
+        "status": status,
+        "last_seen_live": _fmt(item.last_seen_live_at, tzname),
+        "recording": (
+            "失敗" if summary["latest_recording_status"] == "FAILED" and summary["file_count"] == 0
+            else "一部取得・要確認" if visible == "PARTIAL" else RECORDING_LABELS.get(visible, "未録画")
+        ),
         "latest_recording": RECORDING_LABELS.get(summary["latest_recording_status"], "未録画"),
         **_session_comments(db, item),
         "when": _fmt(item.detected_at, tzname),
@@ -248,6 +294,7 @@ def _session_row(db: Session, item: StreamSession, tzname: str) -> dict:
         "open": item.status in OPEN_SESSION,
         "duration": summary["duration_ms"] / 1000 if summary["duration_ms"] is not None else None,
         "recording_error": redact(latest.last_error) if latest and latest.last_error else "",
+        "recording_job_id": latest.id if latest else None,
     }
 
 
@@ -262,15 +309,18 @@ def streamers_page(
 
 def _streamers(
     request: Request, db: Session, error: str, *, streamer_id: int | None = None, return_logs: str | None = None,
-    platform: str = "",
+    platform: str = "", submitted: dict | None = None, editor_id: str | int = "new",
 ) -> HTMLResponse:
     tzname = str(load_settings(db)["timezone"])
+    live_status = request.query_params.get("live_status", "")
     rows = []
     stmt = select(Streamer).where(Streamer.archived_at.is_(None)).order_by(Streamer.platform, Streamer.platform_user_id)
     if streamer_id is not None:
         stmt = stmt.where(Streamer.id == streamer_id)
     if platform:
         stmt = stmt.where(Streamer.platform == platform)
+    if live_status in LIVE_LABELS:
+        stmt = stmt.where(Streamer.live_status == live_status)
     for streamer in db.scalars(stmt):
         recording_job = db.scalar(
             select(RecordingJob).join(StreamSession).where(StreamSession.streamer_id == streamer.id)
@@ -288,6 +338,8 @@ def _streamers(
                 "name": streamer.display_name or streamer.platform_user_id,
                 "status": LIVE_LABELS.get(streamer.live_status, streamer.live_status),
                 "checked": _fmt(streamer.last_checked_at, tzname),
+                "last_ok": _fmt(streamer.last_ok_at, tzname),
+                "check_failed": streamer.live_status in {"UNKNOWN", "ERROR"},
                 "last_live": _fmt(streamer.last_live_at, tzname),
                 "last_recording": _fmt(recording_job.started_at, tzname) if recording_job else "未取得",
                 "recording_state": RECORDING_LABELS.get(recording_job.status, recording_job.status)
@@ -300,10 +352,26 @@ def _streamers(
             }
         )
     context = _shell(request, db, "配信者一覧", _fmt(datetime.now(UTC), tzname))
-    context.update(rows=rows, error=error, return_logs=return_logs, filtered=streamer_id is not None,
-                   saved=request.query_params.get("saved") == "1", platform=platform)
+    context.update(
+        rows=rows, error=error, return_logs=return_logs, filtered=streamer_id is not None,
+        saved=request.method == "GET" and request.query_params.get("saved") == "1", platform=platform,
+        live_status=live_status, live_labels=LIVE_LABELS, form_query=_streamer_filters(request),
+        submitted=submitted, editor_id=editor_id,
+    )
     status = 400 if error else 200
     return _render(request, "streamers/list.html", context, status)
+
+
+def _streamer_filters(request: Request) -> str:
+    return urlencode([
+        (key, value) for key, value in request.query_params.items()
+        if key in {"platform", "live_status", "streamer_id", "return_logs"} and value
+    ])
+
+
+def _streamer_saved(request: Request) -> RedirectResponse:
+    query = _streamer_filters(request)
+    return RedirectResponse("/streamers?" + (query + "&" if query else "") + "saved=1", status_code=303)
 
 
 @router.post("/streamers")
@@ -334,8 +402,14 @@ def create_streamer(
             )
     except ValueError as exc:
         with session_scope() as db:
-            return _streamers(request, db, str(exc))
-    return RedirectResponse("/streamers?saved=1", status_code=303)
+            return _streamers(
+                request, db, str(exc), platform=request.query_params.get("platform", ""),
+                submitted={
+                    "platform": platform, "account": account, "name": display_name,
+                    "monitoring": monitoring_enabled, "recording": recording_enabled, "comments": comments_enabled,
+                },
+            )
+    return _streamer_saved(request)
 
 
 @router.post("/streamers/{streamer_id}")
@@ -355,7 +429,14 @@ async def edit_streamer(
         if streamer is None or streamer.archived_at is not None:
             return _streamers(request, db, "配信者が見つかりません")
         if any(value not in {"0", "1"} for value in (monitoring_enabled, recording_enabled, comments_enabled)):
-            return _streamers(request, db, "監視・録画・コメント収集のON/OFFを指定してください")
+            return _streamers(
+                request, db, "監視・録画・コメント収集のON/OFFを指定してください",
+                platform=request.query_params.get("platform", ""), editor_id=streamer_id,
+                submitted={
+                    "name": display_name, "monitoring": monitoring_enabled,
+                    "recording": recording_enabled, "comments": comments_enabled,
+                },
+            )
         update_streamer(
             db,
             streamer,
@@ -365,7 +446,7 @@ async def edit_streamer(
             comments=_checked(comments_enabled),
         )
     await request.app.state.coordinator.enforce_switches(streamer_id)
-    return RedirectResponse("/streamers?saved=1", status_code=303)
+    return _streamer_saved(request)
 
 
 @router.post("/streamers/{streamer_id}/delete")
@@ -384,7 +465,7 @@ async def remove_streamer(
         archived = archive_streamer(db, streamer)
     if archived:
         await request.app.state.coordinator.enforce_switches(streamer_id)
-    return RedirectResponse("/streamers?saved=1", status_code=303)
+    return _streamer_saved(request)
 
 
 @router.get("/recordings", response_class=HTMLResponse)
@@ -426,6 +507,7 @@ def recordings_page(
             return_q=request.url.query,
             previous_url=_page_url(request, page - 1) if page > 1 else None,
             next_url=_page_url(request, page + 1) if len(records) > size else None,
+            filtered_streamer=db.get(Streamer, streamer_id) if streamer_id else None,
         )
         return _render(request, "recordings/list.html", context)
 
@@ -444,13 +526,18 @@ def _date_filters(start: str, end: str, tzname: str) -> tuple[datetime | None, d
 def recording_detail(
     session_id: int, request: Request, return_q: str = "", comment_count_only: bool = False,
     return_logs: str | None = None, return_comments: str | None = None, deleted: str = "",
-    srt: str = "",
+    srt: str = "", recording_action: str = "",
 ) -> HTMLResponse:
     with session_scope() as db:
         stream = db.get(StreamSession, session_id)
         if comment_count_only:
-            session = {"comments": "未取得"} if stream is None else {"id": stream.id, **_session_comments(db, stream)}
-            response = _render(request, "recordings/comment_count.html", {"session": session})
+            session = {"id": session_id, **(
+                _session_comments(db, stream) if stream else {"comments": "未取得", "comment_status": "未取得"}
+            )}
+            response = _render(request, "recordings/comment_count.html", {
+                "session": session,
+                "swap_comment_state": request.headers.get("HX-Request") == "true",
+            })
             response.headers["Cache-Control"] = "no-store"
             return response
         if stream is None:
@@ -470,21 +557,24 @@ def recording_detail(
             root = configured_root(db)
         except (OSError, ValueError):
             root = None
-        segments = [
-            {
+        segments = []
+        for segment in rows:
+            file_status = _file_status(root, segment)
+            segments.append({
                 "id": segment.id,
                 "number": segment.segment_number,
-                "status": _file_status(root, segment),
+                "status": file_status,
                 "validation": segment.validation_status,
                 "file_name": Path(segment.file_path).name if segment.file_path else None,
+                "file_path": segment.file_path,
+                "srt_path": segment.srt_path,
                 "srt": {"not_generated": "未生成", "generated": "生成済み", "failed": "生成失敗",
                         "skipped": "字幕対象なし", "pending": "保留", "generating": "生成中",
                         "expired": "保存期限により削除済み", "files_deleted": "ファイル削除済み",
                         "stale": "再同期待ち", "resync_failed": "再同期失敗"}
                 .get(segment.srt_status, segment.srt_status),
                 "srt_error": redact(segment.srt_error) if segment.srt_error else "",
-                "can_regenerate": not pending and not stream.comments_purged_at and
-                _file_status(root, segment) == "検証済み",
+                "can_regenerate": not pending and not stream.comments_purged_at and file_status == "検証済み",
                 "provisional": segment.srt_provisional,
                 "offset_ms": segment.srt_manual_offset_ms,
                 "job": segment.recording_job_id,
@@ -497,17 +587,29 @@ def recording_detail(
                 "sync": {
                     "measured": "実測", "approximate": "近似", "manual": "手動補正", "unsynced": "同期不能",
                 }.get(segment.sync_method, "未取得"),
-            }
-            for segment in rows
-        ]
+            })
         context = _shell(request, db, "録画履歴", _fmt(datetime.now(UTC), tzname))
         context.update(
             {
                 "session": _session_row(db, stream, tzname),
                 "segments": segments,
+                "media_check_needed": any(
+                    segment["validation"] == "valid" and segment["status"] not in {"検証済み", "ファイル削除済み"}
+                    for segment in segments
+                ),
                 "return_q": return_q,
                 "return_logs": return_logs,
                 "return_comments": return_comments,
+                "action_query": urlencode({
+                    key: value for key, value in request.query_params.items()
+                    if key in {"return_q", "return_logs", "return_comments"}
+                }),
+                "recording_action": {
+                    "stopped": "手動停止を設定しました。録画の確定状況は取得結果で確認できます。",
+                    "resumed": "手動停止を解除しました。現在の録画状態は取得結果で確認できます。",
+                    "unavailable": "操作できませんでした。現在の配信状態と配信者の監視・録画設定を確認してください。",
+                }.get(recording_action),
+                "recording_action_failed": recording_action == "unavailable",
                 "gaps": [
                     {"type": gap.job_type, "start": _fmt(gap.started_at, tzname),
                      "end": _fmt(gap.ended_at, tzname), "reason": redact(gap.reason)}
@@ -538,16 +640,25 @@ def recording_detail(
 async def stop_session(session_id: int, request: Request, csrf_token: str = Form()) -> HTMLResponse:
     if not tokens_match(request.state.csrf, csrf_token):
         return HTMLResponse("変更を拒否しました", status_code=403)
-    await request.app.state.coordinator.manual_stop(session_id)
-    return RedirectResponse(f"/recordings/{session_id}", status_code=303)
+    stopped = await request.app.state.coordinator.manual_stop(session_id)
+    return _session_action_redirect(request, session_id, recording_action="stopped" if stopped else "unavailable")
 
 
 @router.post("/recordings/{session_id}/resume")
 async def resume_session(session_id: int, request: Request, csrf_token: str = Form()) -> HTMLResponse:
     if not tokens_match(request.state.csrf, csrf_token):
         return HTMLResponse("変更を拒否しました", status_code=403)
-    await request.app.state.coordinator.manual_resume(session_id)
-    return RedirectResponse(f"/recordings/{session_id}", status_code=303)
+    resumed = await request.app.state.coordinator.manual_resume(session_id)
+    return _session_action_redirect(request, session_id, recording_action="resumed" if resumed else "unavailable")
+
+
+def _session_action_redirect(request: Request, session_id: int, **result: str) -> RedirectResponse:
+    query = {
+        key: value for key, value in request.query_params.items()
+        if key in {"return_q", "return_logs", "return_comments"}
+    }
+    encoded = urlencode({**query, **result})
+    return RedirectResponse(f"/recordings/{session_id}" + ("?" + encoded if encoded else ""), status_code=303)
 
 
 @router.post("/recordings/{session_id}/delete")
@@ -565,10 +676,15 @@ def remove_session(
         return HTMLResponse("対象の配信がありません", status_code=404)
     except ValueError as exc:
         return _operation_error(session_id, str(exc))
-    target = f"/recordings/{session_id}"
     if result.status == "completed":
-        target = "/recordings" if mode == "files_and_history" else target + "?deleted=1"
-    return RedirectResponse(target, status_code=303)
+        if mode == "files_and_history":
+            filters = [
+                (key, value) for key, value in parse_qsl(request.query_params.get("return_q", ""))
+                if key != "deleted"
+            ]
+            return RedirectResponse("/recordings?" + urlencode([*filters, ("deleted", "history")]), status_code=303)
+        return _session_action_redirect(request, session_id, deleted="1")
+    return _session_action_redirect(request, session_id)
 
 
 def _operation_error(session_id: int, message: str) -> HTMLResponse:
@@ -601,7 +717,7 @@ def regenerate_srt(
     except ValueError:
         return _operation_error(session_id, "補正値はミリ秒単位の整数で入力してください")
     result = generate_segment_srt(segment_id, manual_offset_ms=offset)
-    return RedirectResponse(f"/recordings/{session_id}?srt={result}", status_code=303)
+    return _session_action_redirect(request, session_id, srt=result)
 
 
 def _file_status(root: Path | None, segment: RecordingSegment) -> str:
@@ -614,7 +730,10 @@ def _file_status(root: Path | None, segment: RecordingSegment) -> str:
     try:
         file = managed_path(root, segment.file_path)
         check_identity(file, segment.file_device, segment.file_inode)
-        return "検証済み" if file.stat().st_size == segment.file_size else "サイズ不一致"
+        size = file.stat().st_size
+        if size == 0:
+            return "空ファイル（0 B）"
+        return "検証済み" if size == segment.file_size else "サイズ不一致"
     except FileNotFoundError:
         return "ファイル不在"
     except (ValueError, OSError):
@@ -628,9 +747,9 @@ def comments_page(
     author: str = "",
     author_id: str = "",
     author_name: str = "",
-    streamer_id: int | None = Query(None, ge=1, le=2**63 - 1),
+    streamer_id: OptionalFilterID = None,
     platform: str = "",
-    session_id: int | None = Query(None, ge=1, le=2**63 - 1),
+    session_id: OptionalFilterID = None,
     start: str = "",
     end: str = "",
     from_date: str = Query("", alias="from"),
@@ -642,7 +761,8 @@ def comments_page(
         tzname = str(load_settings(db)["timezone"])
         context = _shell(request, db, "コメント", "未取得")
         context.update(
-            q=q, author=author, platform=platform, start=start, end=end, session_id=session_id,
+            q=q, author=author, author_id=author_id, author_name=author_name,
+            platform=platform, start=start, end=end, session_id=session_id,
             streamer_id=streamer_id, page=page,
         )
         try:
@@ -670,18 +790,19 @@ def comments_page(
             view.append(
                 {
                     "at": _fmt(comment.posted_at or comment.received_at, tzname),
-                    "platform": streamer.platform if streamer else "未取得",
+                    "time_source": "投稿" if comment.posted_at else "受信",
+                    "platform": PLATFORM_NAMES.get(streamer.platform, streamer.platform) if streamer else "未取得",
                     "author_id": comment.platform_user_id,
                     "offset": comment.recording_offset_ms / 1000 if comment.recording_offset_ms is not None else None,
                     "who": comment.nickname or comment.platform_user_id or "不明",
                     "message": comment.message,
-                    "streamer": streamer.display_name if streamer else "未取得",
+                    "streamer": (streamer.display_name or streamer.platform_user_id) if streamer else "未取得",
                     "session_id": comment.stream_session_id,
                     "anonymous": comment.anonymous_label or "",
                 }
             )
         context.update(
-            rows=view, total=total, author_id=author_id, author_name=author_name, asof=_fmt(datetime.now(UTC), tzname),
+            rows=view, total=total, asof=_fmt(datetime.now(UTC), tzname),
             return_comments=request.url.query,
             previous_url=_page_url(request, page - 1) if page > 1 else None,
             next_url=_page_url(request, page + 1) if total > page * 50 else None,
@@ -709,6 +830,9 @@ def system_page(request: Request) -> HTMLResponse:
             except OSError:
                 root_state = "取得できません"
         coordinator = request.app.state.coordinator
+        gate = coordinator.twitcasting.gate
+        api_remaining = gate.remaining
+        reset = datetime.fromtimestamp(gate.reset_at, UTC) if not gate.allow("monitor") and gate.reset_at else None
         worker = db.scalar(select(RuntimeInstance).where(RuntimeInstance.instance_id == coordinator.instance_id))
         latest_recovery = db.scalar(
             select(SystemEvent.created_at).where(SystemEvent.event_type == "recording_recovered")
@@ -732,13 +856,25 @@ def system_page(request: Request) -> HTMLResponse:
                 )) for item in events],
                 "checked": _fmt(db.scalar(select(func.max(Streamer.last_checked_at))), tzname),
                 "journal": db.connection().exec_driver_sql("PRAGMA journal_mode").scalar_one(),
+                "db_path": str(coordinator.paths.db_path),
                 "worker_heartbeat": _fmt(worker.last_heartbeat_at if worker else None, tzname),
                 "worker_disabled": os.environ.get("LIVE_REC_LAB_DISABLE_SCHEDULER") == "1",
                 "retention_ready": coordinator.retention_ready,
                 "pending_deletions": pending_deletions,
                 "pending_segments": pending_segments,
                 "last_recovery": _fmt(latest_recovery, tzname),
-                "api_remaining": coordinator.twitcasting.gate.remaining,
+                "api_remaining": api_remaining,
+                "monitor_retry_at": _fmt(reset, tzname) if reset else "",
+                "services": [{
+                    "name": label,
+                    "last_ok": _fmt(db.scalar(select(func.max(Streamer.last_ok_at)).where(
+                        Streamer.platform == platform, Streamer.monitoring_enabled.is_(True),
+                    )), tzname),
+                    "errors": db.scalar(select(func.count()).select_from(Streamer).where(
+                        Streamer.platform == platform, Streamer.monitoring_enabled.is_(True),
+                        Streamer.live_status == "ERROR",
+                    )),
+                } for platform, label in PLATFORM_NAMES.items()],
                 "root": root or "未設定",
                 "root_state": root_state,
                 "free": free,
@@ -808,8 +944,8 @@ def logs_page(
     start: str = Query("", max_length=40),
     end: str = Query("", max_length=40),
     correlation_id: str = Query("", max_length=256),
-    session_id: int | None = Query(None, ge=1, le=2**63 - 1),
-    streamer_id: int | None = Query(None, ge=1, le=2**63 - 1),
+    session_id: OptionalFilterID = None,
+    streamer_id: OptionalFilterID = None,
     page: int = Query(1, ge=1, le=10000),
 ) -> HTMLResponse:
     with session_scope() as db:
@@ -845,7 +981,9 @@ def logs_page(
         session_ids = {item.stream_session_id for item in result.entries if item.stream_session_id is not None}
         streamer_ids = {item.streamer_id for item in result.entries if item.streamer_id is not None}
         sessions = set(db.scalars(select(StreamSession.id).where(StreamSession.id.in_(session_ids))))
-        streamers = set(db.scalars(select(Streamer.id).where(Streamer.id.in_(streamer_ids))))
+        streamers = set(db.scalars(select(Streamer.id).where(
+            Streamer.id.in_(streamer_ids), Streamer.archived_at.is_(None),
+        )))
         summaries = []
         if page == 1 and (session_id or correlation_id or streamer_id):
             events = select(SystemEvent).order_by(SystemEvent.created_at.desc(), SystemEvent.id.desc())
@@ -879,6 +1017,7 @@ def logs_page(
         next_url="/logs?" + urlencode({**query_values, "page": page + 1}) if result.total > page * page_size else None,
         rows=[{
             "entry": item, "at": _fmt(item.timestamp, tzname),
+            "key": hashlib.sha256(json.dumps(asdict(item), sort_keys=True, default=str).encode()).hexdigest(),
             "summary": item.message.split("\n", 1)[0][:160],
             "session_link": item.stream_session_id if item.stream_session_id in sessions else None,
             "streamer_link": item.streamer_id if item.streamer_id in streamers else None,

@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% from "components.html" import state %}
 {% from "streamers/form.html" import editor %}
 {% block content %}
-{% if return_logs is not none %}<p><a href="/logs{% if return_logs %}?{{ return_logs }}{% endif %}">ログの検索結果へ戻る</a></p>{% endif %}
+{% if return_logs is not none %}<p><a data-return-scroll href="/logs{% if return_logs %}?{{ return_logs }}{% endif %}">ログの検索結果へ戻る</a></p>{% endif %}
 {% if filtered %}<p><a href="/streamers">配信者一覧に戻る</a></p>{% endif %}
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-{% if saved %}<p role="status">変更を保存しました</p>{% endif %}
+{% if saved %}<p class="operation-status" role="status">変更を保存しました</p>{% endif %}
 <div class="section-toolbar">
   <form method="get" action="/streamers" class="inline">
     <label>サービス
@@ -14,42 +15,51 @@
         <option value="twitcasting" {{ "selected" if platform == "twitcasting" }}>ツイキャス</option>
       </select>
     </label>
+    <label>配信状態
+      <select name="live_status">
+        <option value="">すべて</option>
+        {% for value, label in live_labels.items() %}
+          <option value="{{ value }}"{% if live_status == value %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <button>絞り込む</button>
   </form>
   <button type="button" data-dialog-open="streamer-new">配信者を追加</button>
 </div>
-{{ editor(csrf) }}
+{{ editor(csrf, form_query, values=submitted if editor_id == "new" else none, error=error if submitted and editor_id == "new" else "") }}
 {% if rows %}
-<div class="table-scroll">
-<table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="配信者の表">
+<table class="streamer-table">
   <thead>
-    <tr><th>配信者</th><th>サービス</th><th>監視</th><th>録画</th><th>コメント収集</th><th>最終確認</th><th>操作</th></tr>
+    <tr><th>配信者</th><th>サービス</th><th>監視・配信</th><th>録画</th><th>コメント収集</th><th>最終確認</th><th>操作</th></tr>
   </thead>
   <tbody>
     {% for row in rows %}
     <tr>
       <th scope="row">{{ row.name }}<div class="muted"><code>{{ row.account }}</code></div></th>
       <td>{{ "TikTok LIVE" if row.platform == "tiktok" else "ツイキャス" }}</td>
-      <td><span class="setting">{{ "ON" if row.monitoring else "OFF" }}</span> {{ row.status }}</td>
-      <td><span class="setting">{{ "ON" if row.recording else "OFF" }}</span> {{ row.recording_state }}</td>
-      <td><span class="setting">{{ "ON" if row.comments else "OFF" }}</span> {{ row.comment_state }}</td>
+      <td>{{ state(row.status) }}<span class="subline">監視 {{ "ON" if row.monitoring else "OFF" }}</span></td>
+      <td>{{ state(row.recording_state) }}<span class="subline">録画 {{ "ON" if row.recording else "OFF" }}</span></td>
+      <td>{{ state(row.comment_state) }}<span class="subline">収集 {{ "ON" if row.comments else "OFF" }}</span></td>
       <td><time>{{ row.checked }}</time>
-        <details><summary>過去の時刻</summary>配信 {{ row.last_live }}<br>録画 {{ row.last_recording }}</details>
+        {% if row.check_failed %}<span class="subline">最終成功 {{ row.last_ok }}</span>{% endif %}
+        <details><summary>最終配信・録画</summary>配信 {{ row.last_live }}<br>録画 {{ row.last_recording }}</details>
       </td>
-      <td>
-        <button type="button" data-dialog-open="streamer-{{ row.id }}">編集</button>
+      <td><div class="row-actions">
+        <button class="secondary" type="button" data-dialog-open="streamer-{{ row.id }}">編集</button>
         <a href="/recordings?streamer_id={{ row.id }}">録画履歴</a>
         <button class="quiet" type="button" data-dialog-open="archive-{{ row.id }}">削除</button>
-      </td>
+      </div></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% for row in rows %}
-  {{ editor(csrf, row) }}
+  {{ editor(csrf, form_query, row, submitted if editor_id == row.id else none, error if editor_id == row.id else "") }}
   <dialog id="archive-{{ row.id }}" aria-labelledby="archive-title-{{ row.id }}">
-    <form method="post" action="/streamers/{{ row.id }}/delete">
+    <form method="post" action="/streamers/{{ row.id }}/delete{% if form_query %}?{{ form_query }}{% endif %}">
       <h2 id="archive-title-{{ row.id }}">{{ row.name }}を監視対象から削除</h2>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="confirm" value="delete">
@@ -62,6 +72,6 @@
   </dialog>
 {% endfor %}
 {% else %}
-<p>{{ "条件に一致する配信者はありません。" if platform or filtered else "監視対象はありません。" }}</p>
+<p class="empty">{{ "条件に一致する配信者はありません。" if platform or filtered or live_status else "監視対象はありません。" }}</p>
 {% endif %}
 {% endblock %}

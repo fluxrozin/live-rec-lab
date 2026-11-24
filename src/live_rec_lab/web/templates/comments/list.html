@@ -1,43 +1,50 @@
 {% extends "base.html" %}
+{% from "components.html" import pagination %}
 {% block content %}
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-<form class="inline" method="get" action="/comments">
-  <label>本文 <input name="q" value="{{ q }}"></label>
+<form class="inline filter-bar" method="get" action="/comments">
+  <label class="search-field">コメント本文 <input type="search" name="q" value="{{ q }}"></label>
+  <button type="submit">検索</button>
+  <a href="/comments">条件をクリア</a>
+  <details{% if author_id or author_name or platform or start or end or session_id or streamer_id %} open{% endif %}>
+    <summary>詳細条件</summary>
+    <div class="filter-fields">
   <label>投稿者ID <input name="author_id" value="{{ author_id }}"></label>
   <label>投稿者表示名 <input name="author_name" value="{{ author_name }}"></label>
   <label>サービス
     <select name="platform">
       <option value="">すべて</option>
-      <option value="tiktok" {% if platform == "tiktok" %}selected{% endif %}>TikTok</option>
+      <option value="tiktok" {% if platform == "tiktok" %}selected{% endif %}>TikTok LIVE</option>
       <option value="twitcasting" {% if platform == "twitcasting" %}selected{% endif %}>ツイキャス</option>
     </select>
   </label>
-  <label>から <input type="date" name="start" value="{{ start }}"></label>
-  <label>まで <input type="date" name="end" value="{{ end }}"></label>
+  <label>開始日 <input type="date" name="start" value="{{ start }}"></label>
+  <label>終了日 <input type="date" name="end" value="{{ end }}"></label>
   <label>セッションID <input type="number" name="session_id" min="1" value="{{ session_id or '' }}"></label>
   <label>配信者ID <input type="number" name="streamer_id" min="1" value="{{ streamer_id or '' }}"></label>
-  <button type="submit">検索</button>
-  <a href="/comments">条件をクリア</a>
+    </div>
+  </details>
 </form>
-{% if total is defined %}<p class="muted">{{ total }} 件 · {{ page }} ページ</p>{% endif %}
-{% if comments_expired %}<p role="status">この配信のコメントは保存期限により削除済みです。</p>
+{% if total is defined %}<p class="result-line">{{ total }} 件</p>{% endif %}
+{% if comments_expired %}<p class="notice" role="status">この配信のコメントは保存期限により削除済みです。</p>
 {% elif rows %}
-<table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="コメントの検索結果">
+<table class="comment-table">
   <thead><tr><th>コメント時刻</th><th>投稿者</th><th>配信者・サービス</th><th>本文</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr>
-      <td class="num">{{ row.at }}</td>
-      <td>{{ row.who }}{% if row.anonymous %} {{ row.anonymous }}{% endif %}{% if row.author_id %}<br>{{ row.author_id }}{% endif %}</td>
-      <td><a href="/recordings/{{ row.session_id }}?return_comments={{ return_comments | urlencode }}">{{ row.streamer }}</a><br>{{ row.platform }}</td>
-      <td class="message">{{ row.message }}{% if row.offset is not none %}<div class="muted">録画開始から {{ row.offset }} 秒</div>{% endif %}</td>
+      <td><time>{{ row.at }}</time><span class="subline">{{ row.time_source }}</span></td>
+      <td>{{ row.who }}{% if row.anonymous %} {{ row.anonymous }}{% endif %}{% if row.author_id and row.author_id != row.who %}<code class="subline">{{ row.author_id }}</code>{% endif %}</td>
+      <td><a data-detail-link href="/recordings/{{ row.session_id }}?return_comments={{ return_comments | urlencode }}">{{ row.streamer }}</a><span class="subline">{{ row.platform }}</span></td>
+      <td><div class="comment-body">{{ row.message }}</div>{% if row.offset is not none %}<div class="muted">録画開始から {{ row.offset }} 秒</div>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% elif not error %}
-<p>条件に一致するコメントはありません。</p>
+<p class="empty">{{ "条件に一致するコメントはありません。" if request.url.query else "記録されたコメントはありません。" }}</p>
 {% endif %}
-{% if previous_url %}<a href="{{ previous_url }}">前のページ</a>{% endif %}
-{% if next_url %}<a href="{{ next_url }}">次のページ</a>{% endif %}
+{% if total is defined and not comments_expired %}{{ pagination(page, previous_url, next_url) }}{% endif %}
 {% endblock %}

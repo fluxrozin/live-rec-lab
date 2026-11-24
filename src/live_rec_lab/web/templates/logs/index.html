@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% from "components.html" import state, pagination %}
 {% block content %}
-<form class="inline" method="get" action="/logs">
+<form class="inline filter-bar" method="get" action="/logs">
+  <label class="search-field">本文 <input type="search" name="q" value="{{ q }}" maxlength="500"></label>
   <label>開始 <input type="datetime-local" name="start" value="{{ start }}"></label>
   <label>終了 <input type="datetime-local" name="end" value="{{ end }}"></label>
   <label>重要度
@@ -15,7 +17,6 @@
     </select>
   </label>
   <label>出力元 <input name="component" value="{{ component }}" maxlength="256"></label>
-  <label>本文 <input name="q" value="{{ q }}" maxlength="500"></label>
   {% if correlation_id %}<label>相関ID <input name="correlation_id" value="{{ correlation_id }}"></label>{% endif %}
   {% if session_id %}<label>セッションID <input type="number" min="1" name="session_id" value="{{ session_id }}"></label>{% endif %}
   {% if streamer_id %}<label>配信者ID <input type="number" min="1" name="streamer_id" value="{{ streamer_id }}"></label>{% endif %}
@@ -28,10 +29,11 @@
   <p class="error" role="status">構造化ログを取得できませんでした。</p>
   {% else %}
   {% if result.partial %}<p class="error" role="status">一部のログを取得できませんでした。表示される期間と件数は読み取れた範囲です。</p>{% endif %}
-  <p class="muted">{{ result.total }} 件 · 発生時刻の降順 · {{ page }} ページ</p>
-  {% if result.oldest %}<p class="muted">読取対象期間 {{ oldest }} ～ {{ newest }}</p>{% endif %}
+  <div class="result-line"><span>{{ result.total }} 件 · 発生時刻の降順</span>
+    {% if result.oldest %}<span>読取対象期間 {{ oldest }} ～ {{ newest }}</span>{% endif %}
+  </div>
   {% if rows %}
-  <div class="table-scroll">
+  <div class="table-scroll" tabindex="0" role="region" aria-label="ログの検索結果">
     <table class="log-table">
       <thead><tr><th scope="col">発生時刻</th><th scope="col">重要度</th><th scope="col">出力元</th><th scope="col">メッセージ</th></tr></thead>
       <tbody>
@@ -39,10 +41,10 @@
         {% set entry = row.entry %}
         <tr>
           <td><time datetime="{{ entry.timestamp.isoformat() }}">{{ row.at }}</time></td>
-          <td>{{ entry.level }}</td>
-          <td class="log-component">{{ entry.component }}</td>
+          <td>{{ state(entry.level) }}</td>
+          <td><code>{{ entry.component }}</code></td>
           <td>
-            <details>
+            <details data-log-row="{{ row.key }}">
               <summary>{{ row.summary or '詳細' }}</summary>
               <div class="log-detail">
                 <div class="muted">{{ entry.timestamp.isoformat() }} · {{ entry.level }} · {{ entry.component }}</div>
@@ -52,11 +54,11 @@
                 {% if entry.job_id %}<div>ジョブ ID {{ entry.job_id }}</div>{% endif %}
                 {% if entry.stream_session_id %}<div>セッション ID {{ entry.stream_session_id }}</div>{% endif %}
                 {% if entry.streamer_id %}<div>配信者 ID {{ entry.streamer_id }}</div>{% endif %}
-                <pre data-log-content>{{ entry.message }}{% if entry.exception_type %}{{ '\n' }}{{ entry.exception_type }}{% endif %}{% if entry.exception %}{{ '\n' }}{{ entry.exception }}{% endif %}{% if entry.metadata %}{{ '\n' }}{{ entry.metadata | tojson(indent=2) }}{% endif %}</pre>
+                <pre data-log-content tabindex="0" aria-label="ログ本文と詳細">{{ entry.message }}{% if entry.exception_type %}{{ '\n' }}{{ entry.exception_type }}{% endif %}{% if entry.exception %}{{ '\n' }}{{ entry.exception }}{% endif %}{% if entry.metadata %}{{ '\n' }}{{ entry.metadata | tojson(indent=2) }}{% endif %}</pre>
                 <button type="button" data-log-copy>本文をコピー</button>
                 <span class="muted" role="status"></span>
-                {% if row.session_link %}<a href="/recordings/{{ row.session_link }}?return_logs={{ request.url.query|urlencode }}">関連セッション</a>{% endif %}
-                {% if row.streamer_link %}<a href="/streamers?streamer_id={{ row.streamer_link }}&amp;return_logs={{ request.url.query|urlencode }}">関連配信者</a>{% endif %}
+                {% if row.session_link %}<a data-detail-link href="/recordings/{{ row.session_link }}?return_logs={{ request.url.query|urlencode }}">関連セッション</a>{% endif %}
+                {% if row.streamer_link %}<a data-detail-link href="/streamers?streamer_id={{ row.streamer_link }}&amp;return_logs={{ request.url.query|urlencode }}">関連配信者</a>{% endif %}
               </div>
             </details>
           </td>
@@ -74,8 +76,7 @@
   {% else %}
     <p>記録されたログはありません。</p>
   {% endif %}
-  {% if previous_url %}<a href="{{ previous_url }}">前のページ</a>{% endif %}
-  {% if next_url %}<a href="{{ next_url }}">次のページ</a>{% endif %}
+  {{ pagination(page, previous_url, next_url) }}
   {% endif %}
 {% endif %}
 {% if event_summaries %}

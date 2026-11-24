@@ -1,3 +1,9 @@
-<span{% if session.comments_updating %} data-recording-comment-count
+{% if session.comments_updating %}<span data-recording-comment-count
   hx-get="/recordings/{{ session.id }}?comment_count_only=true"
-  hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>{{ session.comments }}</span>
+  hx-trigger="every 5s" hx-swap="outerHTML"><span>{{ session.comments }}</span>
+  <small data-count-warning role="status" hidden>（更新失敗・前回値）</small></span>
+{% else %}<span>{{ session.comments }}</span>{% endif %}
+{%- if swap_comment_state %}
+  {% from "components.html" import state %}
+  <span id="comment-state-{{ session.id }}" hx-swap-oob="outerHTML">{{ state(session.comment_status or "未収集") }}</span>
+{% endif %}

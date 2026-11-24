@@ -1,17 +1,19 @@
 {% extends "base.html" %}
+{% from "components.html" import state, pagination %}
 {% block content %}
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-<form class="inline" method="get" action="/recordings">
-  <label>検索 <input name="q" value="{{ q }}"></label>
+{% if request.query_params.get("deleted") == "history" %}<p class="operation-status" role="status">動画・字幕と配信履歴を削除しました。</p>{% endif %}
+<form class="inline filter-bar" method="get" action="/recordings">
+  <label class="search-field">配信者・配信タイトル <input type="search" name="q" value="{{ q }}"></label>
   <label>サービス
     <select name="platform">
       <option value="">すべて</option>
-      <option value="tiktok" {% if platform == "tiktok" %}selected{% endif %}>TikTok</option>
+      <option value="tiktok" {% if platform == "tiktok" %}selected{% endif %}>TikTok LIVE</option>
       <option value="twitcasting" {% if platform == "twitcasting" %}selected{% endif %}>ツイキャス</option>
     </select>
   </label>
-  <label>から <input type="date" name="start" value="{{ start }}"></label>
-  <label>まで <input type="date" name="end" value="{{ end }}"></label>
+  <label>開始日 <input type="date" name="start" value="{{ start }}"></label>
+  <label>終了日 <input type="date" name="end" value="{{ end }}"></label>
   {% if streamer_id %}<input type="hidden" name="streamer_id" value="{{ streamer_id }}">{% endif %}
   <label>録画状態
     <select name="recording_status">
@@ -26,30 +28,30 @@
   <button type="submit">絞り込む</button>
   <a href="/recordings">条件をクリア</a>
 </form>
+{% if filtered_streamer %}<p class="result-line">配信者 {{ filtered_streamer.display_name or filtered_streamer.platform_user_id }}</p>{% endif %}
 {% if rows %}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>配信者</th><th>サービス・題名</th><th>配信時刻</th><th>録画</th><th>コメント</th></tr></thead>
+<p class="result-line">{{ rows|length }} 件を表示 · {{ "古い順" if sort == "oldest" else "新しい順" }}</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="配信セッションの表">
+<table class="recording-table">
+  <thead><tr><th>配信タイトル</th><th>配信者</th><th>配信時刻</th><th>録画</th><th>コメント</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr>
-      <td><a href="/recordings/{{ row.id }}?return_q={{ return_q | urlencode }}">{{ row.who }}</a></td>
-      <td>{{ row.platform }}<br>{{ row.title }}</td>
-      <td>{{ row.started }}<br>{{ row.ended }}<br>{{ row.status }}</td>
-      <td>{{ row.recording }}<br>{{ row.file_count if row.file_count is not none else "未取得" }} 本{% if row.file_count %}
+      <th scope="row"><a data-detail-link class="row-title" href="/recordings/{{ row.id }}?return_q={{ return_q | urlencode }}">{{ row.title }}</a></th>
+      <td>{{ row.who }}<span class="subline">{{ row.platform_name }}</span></td>
+      <td><time>{{ row.started }}</time><span class="subline">終了 {{ row.ended }}</span>{{ state(row.status) }}</td>
+      <td>{{ state(row.recording) }}<span class="subline">{{ (row.file_count|string + " 本") if row.file_count is not none else "未取得" }}{% if row.file_count %}
       ／ {{ row.duration if row.duration is not none else '未取得' }}{% if row.duration is not none %} 秒{% endif %}
       ／ {{ row.file_size if row.file_size is not none else '未取得' }}{% if row.file_size is not none %} B{% endif %}
-      {% endif %}</td>
-      <td>{{ row.comment_status or "未収集" }}<br>{% with session=row %}{% include "recordings/comment_count.html" %}{% endwith %}</td>
+      {% endif %}</span></td>
+      <td><span id="comment-state-{{ row.id }}">{{ state(row.comment_status or "未収集") }}</span><span class="subline">{% with session=row %}{% include "recordings/comment_count.html" %}{% endwith %}</span></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% elif not error %}
-<p>条件に合う配信記録はありません。</p>
+<p class="empty">{{ "条件に合う配信記録はありません。" if request.url.query else "配信記録はありません。" }}</p>
 {% endif %}
-{% if page %}<p class="muted">{{ page }} ページ</p>{% endif %}
-{% if previous_url %}<a href="{{ previous_url }}">前のページ</a>{% endif %}
-{% if next_url %}<a href="{{ next_url }}">次のページ</a>{% endif %}
+{% if not error %}{{ pagination(page, previous_url, next_url) }}{% endif %}
 {% endblock %}

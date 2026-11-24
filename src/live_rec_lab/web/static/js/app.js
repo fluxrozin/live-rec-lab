@@ -1,29 +1,55 @@
 (function () {
   var root = document.documentElement;
-  function apply(value) {
-    root.dataset.font = value;
-    if (value !== "noto" || !document.fonts || !document.fonts.check) {
-      delete root.dataset.fontReady;
-      return;
-    }
-    document.fonts.load("16px 'LiveRecorder Noto'", "録画").then(function (faces) {
-      root.dataset.fontReady = faces.length ? "yes" : "no";
-    }).catch(function () { root.dataset.fontReady = "no"; });
-  }
-  if (root.dataset.font === "noto") apply("noto");
+  var preview = document.querySelector("[data-font-preview]");
+  if (!document.fonts || (root.dataset.font !== "noto" && !preview)) return;
+  document.fonts.load("16px 'Noto Sans JP Probe'", "録画").then(function (faces) {
+    root.dataset.fontReady = faces.length ? "yes" : "no";
+  }).catch(function () { root.dataset.fontReady = "no"; });
 })();
 
-document.addEventListener("htmx:beforeRequest", function (event) {
-  var target = event.detail.elt;
-  if (!target.hasAttribute("data-recording-comment-count") && target.id !== "metrics") return;
-  var active = document.activeElement;
-  var selection = document.getSelection();
-  if (document.hidden || document.querySelector("dialog[open]") ||
+(function () {
+  var pointing = false;
+  document.addEventListener("pointerdown", function () { pointing = true; });
+  ["pointerup", "pointercancel"].forEach(function (name) {
+    window.addEventListener(name, function () { pointing = false; });
+  });
+  window.addEventListener("blur", function () { pointing = false; });
+
+  function pause(target) {
+    var active = document.activeElement;
+    var selection = document.getSelection();
+    return document.hidden || pointing || document.querySelector("dialog[open]") ||
       (active && (active.matches("input, select, textarea, [contenteditable]") || target.contains(active))) ||
-      (selection && !selection.isCollapsed)) {
-    event.preventDefault();
+      (selection && !selection.isCollapsed);
   }
-});
+
+  function isPoll(target) {
+    return target.id === "metrics" || target.hasAttribute("data-recording-comment-count");
+  }
+
+  document.addEventListener("htmx:beforeRequest", function (event) {
+    var target = event.detail.elt;
+    if (isPoll(target) && pause(target)) event.preventDefault();
+  });
+
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    var target = event.detail.target;
+    if (isPoll(target) && pause(target)) event.detail.shouldSwap = false;
+  });
+
+  function showCountFailure(event) {
+    var target = event.detail.elt;
+    if (!target.hasAttribute("data-recording-comment-count")) return;
+    var warning = target.querySelector("[data-count-warning]");
+    warning.hidden = false;
+  }
+  document.addEventListener("htmx:afterRequest", function (event) {
+    if (event.detail.failed) showCountFailure(event);
+  });
+  ["htmx:sendError", "htmx:timeout", "htmx:sendAbort"].forEach(function (name) {
+    document.addEventListener(name, showCountFailure);
+  });
+})();
 
 document.addEventListener("click", async function (event) {
   if (!event.target.matches("[data-log-copy]")) return;
@@ -99,36 +125,48 @@ document.addEventListener("click", async function (event) {
 
 (function () {
   var logo = document.querySelector(".brand");
-  var canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 32;
-  var context = canvas.getContext("2d");
+  var label = logo.querySelector(".brand-status");
+  var freshness = document.getElementById("display-freshness");
+  var timestamp = document.getElementById("display-asof");
   var icon = document.createElement("link");
   icon.rel = "icon";
   document.head.appendChild(icon);
 
-  function update() {
-    var metrics = document.getElementById("metrics");
-    var recording = (metrics ? metrics.dataset.recording : logo.dataset.recording) === "yes";
-    logo.classList.toggle("recording-brand", Boolean(recording));
-    if (metrics) document.getElementById("display-asof").textContent = metrics.dataset.asof;
-    context.clearRect(0, 0, 32, 32);
-    context.fillStyle = recording ? "#c93446" : "#4769c8";
-    context.beginPath();
-    context.arc(16, 16, 12, 0, Math.PI * 2);
-    context.fill();
-    icon.href = canvas.toDataURL();
+  function update(state) {
+    var recording = state === "yes";
+    var unknown = state === "unknown";
+    logo.classList.toggle("recording-brand", recording);
+    logo.classList.toggle("recording-unknown", unknown);
+    label.textContent = recording ? "録画中" : unknown ? "録画状態不明" : "";
+    var color = recording ? "#9e263e" : unknown ? "#79500c" : "#204f65";
+    var mark = unknown ? '<path fill="white" d="M16 8l8 8-8 8-8-8z"/>' : '<circle cx="16" cy="16" r="5" fill="white"/>';
+    icon.href = "data:image/svg+xml," + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="' +
+      color + '"/>' + mark + "</svg>"
+    );
   }
-  update();
+
+  update(logo.dataset.recording);
   document.addEventListener("htmx:afterSwap", function (event) {
-    if (event.detail.target.id === "metrics") update();
+    if (event.detail.target.id !== "metrics") return;
+    var metrics = document.getElementById("metrics");
+    timestamp.textContent = metrics.dataset.asof;
+    freshness.textContent = "最終取得";
+    update(metrics.dataset.recording);
   });
-  document.addEventListener("htmx:afterRequest", function (event) {
-    if (event.detail.elt.id !== "metrics" || !event.detail.failed) return;
+  function showDashboardFailure(event) {
+    if (event.detail.elt.id !== "metrics") return;
     var warning = document.querySelector("[data-dashboard-warning]");
-    if (warning) {
-      warning.textContent = "更新できませんでした。表示中の情報は古い可能性があります。";
-      warning.hidden = false;
-    }
+    warning.textContent = "更新できませんでした。前回取得した稼働状況を表示しています。";
+    warning.hidden = false;
+    freshness.textContent = "前回取得";
+    update("unknown");
+  }
+  document.addEventListener("htmx:afterRequest", function (event) {
+    if (event.detail.failed) showDashboardFailure(event);
+  });
+  ["htmx:sendError", "htmx:timeout", "htmx:sendAbort"].forEach(function (name) {
+    document.addEventListener(name, showDashboardFailure);
   });
 })();
 
@@ -149,23 +187,97 @@ function canClose(dialog) {
   var form = dialog.querySelector("[data-dirty-form]");
   if (!form || form.dataset.dirty !== "true") return true;
   if (!window.confirm("未保存の変更を取り消しますか？")) return false;
+  if (dialog.hasAttribute("data-dialog-reopen")) {
+    delete form.dataset.dirty;
+    window.location.replace("/streamers" + window.location.search);
+    return true;
+  }
   form.reset();
   delete form.dataset.dirty;
+  form.querySelector("[data-editor-status]").textContent = "";
   return true;
 }
 
 document.querySelectorAll("dialog").forEach(function (dialog) {
+  if (dialog.hasAttribute("data-dialog-reopen")) dialog.showModal();
   dialog.addEventListener("input", function (event) {
     var form = event.target.closest("[data-dirty-form]");
-    if (form) form.dataset.dirty = "true";
+    if (form) {
+      form.dataset.dirty = "true";
+      form.querySelector("[data-editor-status]").textContent = "未保存の変更があります";
+    }
   });
   dialog.addEventListener("cancel", function (event) {
     if (!canClose(dialog)) event.preventDefault();
   });
-  dialog.addEventListener("submit", function (event) {
-    event.target.querySelectorAll("[type=submit]").forEach(function (button) {
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
-    });
+});
+
+window.addEventListener("beforeunload", function (event) {
+  if (!document.querySelector('dialog[open] [data-dirty-form][data-dirty="true"]:not([aria-busy="true"])')) return;
+  event.preventDefault();
+  event.returnValue = true;
+});
+
+document.querySelectorAll("form[method=post]").forEach(function (form) {
+  var submitting = false;
+  var submitter, label;
+  form.addEventListener("submit", function (event) {
+    if (submitting) {
+      event.preventDefault();
+      return;
+    }
+    submitting = true;
+    form.setAttribute("aria-busy", "true");
+    submitter = event.submitter;
+    if (submitter) {
+      label = submitter.textContent;
+      submitter.disabled = true;
+      if (!form.hasAttribute("data-settings")) submitter.textContent = "送信中…";
+    }
+  });
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted || !submitting) return;
+    submitting = false;
+    form.removeAttribute("aria-busy");
+    if (submitter) {
+      submitter.disabled = false;
+      submitter.textContent = label;
+    }
+    var status = form.querySelector("[data-settings-status], [data-editor-status]");
+    if (status) status.textContent = "送信結果を確認できません。保存済みの内容を確認してください。";
   });
 });
+
+(function () {
+  function key(url) { return "return-scroll:" + url.pathname + url.search; }
+
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    var link = event.target.closest("a[data-detail-link], a[data-return-scroll]");
+    if (!link) return;
+    try {
+      if (link.hasAttribute("data-detail-link")) {
+        sessionStorage.setItem(key(location), JSON.stringify({
+          y: window.scrollY,
+          detail: link.closest("details")?.dataset.logRow
+        }));
+      } else {
+        sessionStorage.setItem("return-scroll", key(link));
+      }
+    } catch (_) { /* Browser privacy settings may disable storage. */ }
+  });
+
+  try {
+    var target = sessionStorage.getItem("return-scroll");
+    if (target === key(location)) {
+      sessionStorage.removeItem("return-scroll");
+      var saved = JSON.parse(sessionStorage.getItem(target));
+      sessionStorage.removeItem(target);
+      if (saved) {
+        var details = document.querySelector("[data-log-row='" + CSS.escape(saved.detail || "") + "']");
+        if (details) details.open = true;
+        window.scrollTo(0, saved.y);
+      }
+    }
+  } catch (_) { /* Browser privacy settings may disable storage. */ }
+})();

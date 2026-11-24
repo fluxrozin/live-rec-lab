@@ -1,50 +1,66 @@
 {% extends "base.html" %}
+{% from "components.html" import events_list %}
 {% block content %}
-<dl class="kv">
-  <div><dt>監視ワーカーの最終稼働記録</dt><dd>{{ "停止設定" if worker_disabled else worker_heartbeat }}</dd></div>
-  {% if not retention_ready %}<div><dt>監視の再開</dt><dd>削除・復元の照合待ち</dd></div>{% endif %}
-  <div><dt>最終監視確認</dt><dd>{{ checked }}</dd></div>
-  <div><dt>SQLite ジャーナル</dt><dd>{{ journal }}</dd></div>
-  <div><dt>プロセス</dt><dd class="num">{{ pid }}</dd></div>
-  <div><dt>保存先</dt><dd>{{ root }} / {{ root_state }}</dd></div>
-  <div><dt>最後に記録した録画照合</dt><dd>{{ last_recovery }}</dd></div>
-  <div><dt>未確定の録画</dt><dd>{{ pending_segments }}件</dd></div>
-  <div><dt>未完了の削除</dt><dd>{{ pending_deletions }}件</dd></div>
-  <div><dt>空き容量</dt><dd>{{ free }}</dd></div>
-  <div><dt>ツイキャス資格情報</dt><dd>{{ twitcasting }}</dd></div>
-  <div><dt>ツイキャス API残枠</dt><dd>{{ api_remaining if api_remaining is not none else "未取得" }}</dd></div>
-  <div><dt>Euler Stream キー</dt><dd>{{ euler }}</dd></div>
-</dl>
-<h2>依存コマンド</h2>
-<table>
-  <thead><tr><th>名前</th><th>状態</th></tr></thead>
-  <tbody>
-    {% for tool in media_tools %}
-    <tr><td>{{ tool.name }}</td><td>
-      {% if tool.version %}{{ tool.version }}<br><code>{{ tool.path }}</code>
-      <br>デコーダー {{ tool.codecs|join(" / ") if tool.codecs else "対象を確認できません" }}
-      {% else %}実行可能な組を確認できません{% endif %}
-    </td></tr>
+<section aria-labelledby="system-events">
+  <div class="section-head"><h2 id="system-events">直近の警告・エラー</h2><a href="/logs">ログを調べる</a></div>
+  {% if events %}{{ events_list(events, "関連ログを絞り込む") }}
+  {% else %}<p class="empty">記録された警告・エラーはありません。</p>{% endif %}
+</section>
+<div class="health-grid">
+  <section aria-labelledby="runtime-health">
+    <div class="section-head"><h2 id="runtime-health">アプリ・監視</h2></div>
+    <dl class="kv">
+      <div><dt>Webアプリ</dt><dd>応答あり <span class="subline">PID {{ pid }}</span></dd></div>
+      <div><dt>監視ワーカー</dt><dd>{{ "停止設定" if worker_disabled else worker_heartbeat }}{% if not worker_disabled %}<span class="subline">最終稼働記録</span>{% endif %}</dd></div>
+      {% if not retention_ready %}<div><dt>監視の再開</dt><dd>削除・復元の照合待ち</dd></div>{% endif %}
+      <div><dt>最終監視確認</dt><dd><time>{{ checked }}</time></dd></div>
+      <div><dt>SQLite</dt><dd>読取可 <span class="subline">ジャーナル {{ journal }}</span></dd></div>
+      <div><dt>SQLite ファイル</dt><dd><code>{{ db_path }}</code><span class="subline">書き込み状態 未確認</span></dd></div>
+    </dl>
+  </section>
+  <section aria-labelledby="storage-health">
+    <div class="section-head"><h2 id="storage-health">保存先・ファイル照合</h2><a href="/settings?section=recording">保存設定</a></div>
+    <dl class="kv">
+      <div><dt>保存先</dt><dd>{{ root_state }}<code class="subline">{{ root }}</code></dd></div>
+      <div><dt>空き容量</dt><dd>{{ free }}</dd></div>
+      <div><dt>最後の録画照合</dt><dd><time>{{ last_recovery }}</time></dd></div>
+      <div><dt>未確定の録画</dt><dd>{{ pending_segments }} 件</dd></div>
+      <div><dt>未完了の削除</dt><dd>{{ pending_deletions }} 件</dd></div>
+    </dl>
+  </section>
+</div>
+<section class="section" aria-labelledby="external-health">
+  <div class="section-head"><h2 id="external-health">外部サービス</h2><a href="/settings?section=monitor">監視設定</a></div>
+  <dl class="kv compact">
+    <div><dt>ツイキャス資格情報</dt><dd>{{ twitcasting }}</dd></div>
+    <div><dt>ツイキャス API残枠</dt><dd>{{ api_remaining if api_remaining is not none else "未取得" }}{% if monitor_retry_at %}<span class="subline">監視の再試行目安 {{ monitor_retry_at }}</span>{% endif %}</dd></div>
+    <div><dt>Euler Stream キー</dt><dd>{{ euler }}</dd></div>
+    {% for service in services %}
+    <div><dt>{{ service.name }}</dt><dd>最終成功 {{ service.last_ok }}{% if service.errors %}<span class="subline">確認エラー {{ service.errors }} 件</span>{% endif %}</dd></div>
     {% endfor %}
-    {% for tool in tools %}
-    <tr><td>{{ tool.name }}</td><td>{% if tool.ok %}見つかりました{% else %}見つかりません{% endif %}</td></tr>
-    {% endfor %}
-    {% for item in versions %}
-    <tr><td>{{ item.name }}</td><td class="num">{{ item.version }}</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-<h2>直近の警告・エラー</h2>
-{% if events %}
-<ul class="events">
-  {% for event in events %}
-  <li><span class="sev">{{ event.severity }}</span> {{ event.at }} {{ event.message }}
-    <a href="{{ event.log_url }}">関連ログを絞り込む</a>
-    {% if event.session_id %}<a href="/recordings/{{ event.session_id }}">関連セッション</a>{% endif %}
-  </li>
-  {% endfor %}
-</ul>
-{% else %}
-<p>記録された警告・エラーはありません。</p>
-{% endif %}
+  </dl>
+</section>
+<details class="section">
+  <summary>録画エンジン・依存ツール</summary>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="録画エンジンと依存ツール">
+    <table>
+      <thead><tr><th>名前</th><th>状態・バージョン</th></tr></thead>
+      <tbody>
+        {% for tool in media_tools %}
+        <tr><th scope="row">{{ tool.name }}</th><td>
+          {% if tool.version %}{{ tool.version }}<code class="subline">{{ tool.path }}</code>
+          <span class="subline">デコーダー {{ tool.codecs|join(" / ") if tool.codecs else "対象を確認できません" }}</span>
+          {% else %}実行可能な組を確認できません{% endif %}
+        </td></tr>
+        {% endfor %}
+        {% for tool in tools %}
+        <tr><th scope="row">{{ tool.name }}</th><td>{{ "見つかりました" if tool.ok else "見つかりません" }}</td></tr>
+        {% endfor %}
+        {% for item in versions %}
+        <tr><th scope="row">{{ item.name }}</th><td>{{ item.version }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
 {% endblock %}

@@ -1,51 +1,62 @@
+{% from "components.html" import state, events_list %}
 <div id="metrics" hx-get="/partials/dashboard" hx-trigger="every 5s" hx-swap="outerHTML" data-asof="{{ asof }}" data-recording="{{ 'yes' if recording_count else 'no' }}">
-  <dl class="metrics">
-    <div><dt>監視対象</dt><dd>{{ monitored }}</dd></div>
-    <div><dt>配信中</dt><dd class="status-live">{{ live_count if live_count or not monitor_incomplete else '未確認' }}</dd></div>
-    <div><dt>録画中</dt><dd class="status-recording">{{ recording_count }}</dd></div>
-    <div><dt>コメント収集中</dt><dd class="status-comment">{{ collecting_count }}</dd></div>
-  </dl>
-  {% if monitor_incomplete %}<p class="muted">配信状態を確認できていない対象があります。</p>{% endif %}
   <p class="error" data-dashboard-warning role="status" hidden></p>
-  <h2>稼働中の配信</h2>
-  {% if sessions %}
-  <table>
-    <thead><tr><th>配信者</th><th>サービス</th><th>配信</th><th>録画</th><th>コメント</th><th>開始</th></tr></thead>
-    <tbody>
-      {% for row in sessions %}
-      <tr>
-        <td><a href="/recordings/{{ row.id }}">{{ row.who }}</a></td>
-        <td>{{ row.platform }}</td><td>{{ row.status }}</td><td>{{ row.recording }}</td><td>{{ row.comment_status or "未収集" }} · {{ row.comments }}</td>
-        <td>{{ row.started }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% elif not monitor_incomplete %}
-  <p>稼働中の配信はありません。</p>
-  {% endif %}
-  {% if events %}
-  <h2>直近の警告・エラー <a href="/system">診断要約</a></h2>
-  <ul class="events">
-    {% for event in events %}
-    <li><span class="sev">{{ event.severity }}</span> {{ event.at }} {{ event.message }}
-      <a href="{{ event.log_url }}">関連ログ</a>
-      {% if event.session_id %}<a href="/recordings/{{ event.session_id }}">関連セッション</a>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-  <h2>録画・保存</h2>
-  <dl class="metrics">
-    <div><dt>本日の録画</dt><dd>{{ today_count }}</dd></div>
-    <div><dt>本日のコメント</dt><dd>{{ today_comments }}</dd></div>
-    <div><dt>録画の合計サイズ</dt><dd>{% if total_size is not none %}{{ '%.2f'|format(total_size / 1073741824) }} GiB{% else %}未取得{% endif %}</dd></div>
-    <div><dt>空き容量</dt><dd>{{ free_space }}</dd></div>
+  <dl class="metrics" aria-label="現在の稼働数">
+    <div><dt>監視対象</dt><dd>{{ monitored }}<small>人</small></dd></div>
+    <div><dt>{{ state('配信中') }}</dt><dd>{% if monitor_incomplete and not live_count %}未確認{% else %}{{ live_count }}<small>件</small>{% endif %}</dd></div>
+    <div><dt>{{ state('録画中') }}</dt><dd>{{ recording_count }}<small>件</small></dd></div>
+    <div><dt><span class="state state--comment">コメント収集中</span></dt><dd>{{ collecting_count }}<small>件</small></dd></div>
   </dl>
-  {% if recent %}
-  <h2>最近の録画</h2>
-  <ul class="events">{% for row in recent %}
-    <li><a href="/recordings/{{ row.id }}">{{ row.who }} ／ {{ row.title }}</a> {{ row.started }} {{ row.recording }}</li>
-  {% endfor %}</ul>
+  <section class="section" aria-labelledby="live-heading">
+    <div class="section-head"><h2 id="live-heading">稼働中の配信</h2></div>
+    {% if monitor_incomplete %}<p class="notice">配信状態を確認できていない対象があります。 <a href="/streamers">配信者一覧</a></p>{% endif %}
+    {% if sessions %}
+    <div class="table-scroll" tabindex="0" role="region" aria-label="稼働中の配信一覧">
+      <table class="live-table">
+        <thead><tr><th>配信者・サービス</th><th>配信</th><th>録画</th><th>コメント</th><th>開始・経過</th></tr></thead>
+        <tbody>
+        {% for row in sessions %}
+        <tr>
+          <th scope="row"><a href="/recordings/{{ row.id }}">{{ row.who }}</a><span class="subline">{{ row.platform_name }}</span></th>
+          <td>{{ state(row.status) }}</td><td>{{ state(row.recording) }}{% if row.latest_recording == "録画中" and row.recording != "録画中" %}<span class="subline">{{ state(row.latest_recording) }}</span>{% endif %}</td>
+          <td>{{ state(row.comment_status or '未収集') }}<span class="subline">{{ row.comments }}</span></td>
+          <td><time>{{ row.started }}</time>{% if row.elapsed %}<span class="subline">経過 {{ row.elapsed }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif not monitor_incomplete %}
+    <p class="empty">稼働中の配信はありません。</p>
+    {% endif %}
+  </section>
+  {% if events or capacity_issue %}
+  <section class="section" aria-labelledby="warning-heading">
+    <div class="section-head"><h2 id="warning-heading">直近の警告・エラー</h2><a href="/system">システム状態</a></div>
+    {% if capacity_issue %}<p class="notice">{{ capacity_issue }} <a href="/system#storage-health">保存先の診断</a></p>{% endif %}
+    {{ events_list(events) }}
+  </section>
   {% endif %}
+  <div class="dashboard-grid">
+    <section aria-labelledby="recent-heading">
+      <div class="section-head"><h2 id="recent-heading">最近の録画</h2><a href="/recordings">録画履歴</a></div>
+      {% if recent %}
+      <ul class="recent-list">{% for row in recent %}
+        <li>
+          <div><a class="row-title" href="/recordings/{{ row.id }}">{{ row.title }}</a><span class="subline">{{ row.who }}</span></div>
+          <div>{{ state(row.recording) }}<span class="subline"><time>{{ row.started }}</time></span></div>
+        </li>
+      {% endfor %}</ul>
+      {% else %}<p class="empty">録画記録はありません。</p>{% endif %}
+    </section>
+    <section aria-labelledby="storage-heading">
+      <div class="section-head"><h2 id="storage-heading">集計・保存先</h2></div>
+      <dl class="kv compact">
+        <div><dt>本日の録画</dt><dd>{{ today_count }} 件</dd></div>
+        <div><dt>本日のコメント</dt><dd>{{ today_comments }} 件</dd></div>
+        <div><dt>録画の合計サイズ</dt><dd>{% if total_size is not none %}{{ '%.2f'|format(total_size / 1073741824) }} GiB{% else %}未取得{% endif %}</dd></div>
+        <div><dt><a href="/system#storage-health">保存先の空き容量</a></dt><dd>{{ free_space }}</dd></div>
+      </dl>
+    </section>
+  </div>
 </div>

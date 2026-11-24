@@ -58,6 +58,10 @@ def test_recording_comment_count_refreshes_until_the_session_ends(client):
     with session_scope() as db:
         db.get(CommentCollectionJob, job_id).status = "COMPLETED"
     assert client.get(count_url).text.strip() == "<span>1</span>"
+    polling = client.get(count_url, headers={"HX-Request": "true"})
+    assert f'id="comment-state-{session_id}"' in polling.text
+    assert 'hx-swap-oob="outerHTML"' in polling.text
+    assert "完了" in polling.text
 
 
 def test_pages_and_streamer_roundtrip(client):

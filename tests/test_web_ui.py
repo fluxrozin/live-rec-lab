@@ -156,3 +156,61 @@ def test_archive_then_reactivate_preserves_history_and_requires_explicit_toggles
     response = client.post("/api/v1/streamers", json={**base, "comments_enabled": False}, headers=headers)
     assert response.json()["id"] == streamer_id and response.json()["comments_enabled"] is False
     assert client.get(f"/recordings/{stream.id}").status_code == 200
+
+
+def test_dashboard_shows_platform_name_and_elapsed_for_confirmed_start(client):
+    from datetime import timedelta
+
+    from live_rec_lab.config import utcnow
+    from live_rec_lab.db.models import StreamSession
+    from live_rec_lab.services.sessions import register_streamer
+
+    now = utcnow()
+    with session_scope() as db:
+        streamer = register_streamer(
+            db, platform="twitcasting", account="elapsed", display_name="稼働中の配信者",
+            monitoring=True, recording=False, comments=False,
+        )
+        streamer.live_status = "LIVE"
+        db.add(StreamSession(
+            streamer_id=streamer.id, platform_stream_id="elapsed", status="LIVE",
+            detected_at=now, platform_started_at=now - timedelta(seconds=90),
+        ))
+    page = client.get("/partials/dashboard").text
+    assert "ツイキャス" in page
+    assert "経過 00:01:30" in page
+
+
+def test_comment_search_accepts_empty_optional_numeric_fields(client):
+    response = client.get("/comments", params={"q": "確認", "session_id": "", "streamer_id": ""})
+    assert response.status_code == 200
+    assert "条件に一致するコメントはありません" in response.text
+    assert client.get("/comments", params={"session_id": "-1"}).status_code == 422
+
+
+def test_duplicate_streamer_keeps_editor_input_and_service_filter(client):
+    token = client.get("/streamers").headers["x-csrf-token"]
+    form = {
+        "csrf_token": token, "platform": "twitcasting", "account": "existing",
+        "monitoring_enabled": "0", "recording_enabled": "0", "comments_enabled": "0",
+    }
+    assert client.post("/streamers", data=form).status_code == 200
+    response = client.post("/streamers?platform=twitcasting", data={**form, "display_name": "入力した名前"})
+    assert response.status_code == 400
+    assert 'data-dialog-reopen' in response.text
+    assert 'name="display_name" maxlength="128" value="入力した名前"' in response.text
+    assert 'action="/streamers?platform=twitcasting"' in response.text
+
+
+def test_zero_byte_media_is_never_presented_as_verified(client, clip):
+    from live_rec_lab.db.models import RecordingSegment
+
+    session_id, segment_id, path, _ = clip
+    path.write_bytes(b"")
+    with session_scope() as db:
+        db.get(RecordingSegment, segment_id).file_size = 0
+
+    response = client.get(f"/recordings/{session_id}")
+    assert "空ファイル（0 B）" in response.text
+    assert "実ファイル要確認" in response.text
+    assert "字幕を再生成" not in response.text

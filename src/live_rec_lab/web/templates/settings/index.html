@@ -21,7 +21,7 @@
     <span id="{{ key }}-label">{{ label }}</span>
     <select id="{{ key }}" name="{{ key }}" aria-labelledby="{{ key }}-label"
       {% if errors.get(key) %}aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
-      {% if form[key]|string|lower not in options|map(attribute=0) %}
+      {% if key != "font" and form[key]|string|lower not in options|map(attribute=0) %}
         <option value="{{ form[key] }}" selected>{{ form[key] }}</option>
       {% endif %}
       {% for value, title in options %}
@@ -103,6 +103,7 @@
     {{ select_field("font", "フォント", [("windows", "Windows標準"), ("noto", "Noto Sans JP")]) }}
     <p class="muted">保存済みのフォント {{ "Noto Sans JP" if settings.font == "noto" else "Windows標準" }}</p>
     <p class="preview" id="settings-font-preview" data-font-preview="{{ form.font }}">プレビュー 録画履歴 あア亜 LiveRecorder 0123 <time>2026-11-23 21:05:30</time></p>
+    <p class="font-unavailable notice">このブラウザで Noto Sans JP を検出できません。代替フォントで表示しています。</p>
   </fieldset>
 
   <fieldset id="settings-advanced" data-settings-panel="advanced">

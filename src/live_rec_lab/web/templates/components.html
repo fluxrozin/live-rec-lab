@@ -1,0 +1,32 @@
+{% macro state(value) -%}
+  {% set tone = {
+    "配信中": "live", "録画中": "recording", "収集中": "comment",
+    "失敗": "error", "障害": "error", "ERROR": "error", "CRITICAL": "error", "error": "error",
+    "WARNING": "warning", "warning": "warning", "一部取得・要確認": "warning", "部分完了": "warning",
+    "終了未確認": "warning", "実ファイル要確認": "warning", "未確認": "warning", "再接続中": "warning"
+  }.get(value, "neutral") %}
+  <span class="state state--{{ tone }}">{{ value }}</span>
+{%- endmacro %}
+
+{% macro pagination(page, previous_url, next_url) -%}
+  <div class="pagination" aria-label="ページ移動" role="navigation">
+    <span>{{ page }} ページ</span>
+    {% if previous_url %}<a class="button secondary" href="{{ previous_url }}">前のページ</a>{% endif %}
+    {% if next_url %}<a class="button secondary" href="{{ next_url }}">次のページ</a>{% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro events_list(events, link_text="関連ログ") -%}
+  <ul class="events">
+  {% for event in events %}
+    <li>
+      <div class="event-meta">{{ state(event.severity) }} <time>{{ event.at }}</time></div>
+      <div class="event-message">{{ event.message }}</div>
+      <div class="row-actions">
+        <a href="{{ event.log_url }}">{{ link_text }}</a>
+        {% if event.session_id %}<a href="/recordings/{{ event.session_id }}">関連セッション</a>{% endif %}
+      </div>
+    </li>
+  {% endfor %}
+  </ul>
+{%- endmacro %}

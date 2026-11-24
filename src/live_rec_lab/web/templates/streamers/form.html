@@ -1,38 +1,46 @@
-{% macro switch(name, label, enabled, suffix) %}
+{% macro switch(name, label, value, suffix) %}
 <label><span id="{{ name }}-label-{{ suffix }}">{{ label }}</span>
   <select name="{{ name }}_enabled" aria-labelledby="{{ name }}-label-{{ suffix }}" required>
-    <option value="1" {{ "selected" if enabled }}>ON</option>
-    <option value="0" {{ "selected" if not enabled }}>OFF</option>
+    {% if value not in ['0', '1'] %}<option value="" selected>指定してください</option>{% endif %}
+    <option value="1" {{ "selected" if value == "1" }}>ON</option>
+    <option value="0" {{ "selected" if value == "0" }}>OFF</option>
   </select>
 </label>
 {% endmacro %}
-{% macro editor(csrf, row=none) %}
+
+{% macro editor(csrf, query, row=none, values=none, error="") %}
 {% set suffix = row.id if row else "new" %}
-<dialog id="streamer-{{ row.id if row else 'new' }}" aria-labelledby="editor-title-{{ row.id if row else 'new' }}">
-  <form method="post" class="editor" action="/streamers{% if row %}/{{ row.id }}{% endif %}" data-dirty-form>
-    <h2 id="editor-title-{{ row.id if row else 'new' }}">{{ "配信者を編集" if row else "配信者を追加" }}</h2>
+{% set values = values if values is not none else {} %}
+<dialog id="streamer-{{ suffix }}" aria-labelledby="editor-title-{{ suffix }}"{% if error %} data-dialog-reopen{% endif %}>
+  <form method="post" class="editor" action="/streamers{% if row %}/{{ row.id }}{% endif %}{% if query %}?{{ query }}{% endif %}"
+        data-dirty-form{% if error %} data-dirty="true"{% endif %}>
+    <h2 id="editor-title-{{ suffix }}">{{ "配信者を編集" if row else "配信者を追加" }}</h2>
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     {% if row %}
-      <p>{{ row.platform }} · <code>{{ row.account }}</code></p>
+      <p>{{ "TikTok LIVE" if row.platform == "tiktok" else "ツイキャス" }} · <code>{{ row.account }}</code></p>
     {% else %}
       <label>サービス
         <select name="platform">
           <option value="tiktok">TikTok LIVE</option>
-          <option value="twitcasting">ツイキャス</option>
+          <option value="twitcasting"{% if values.get('platform') == 'twitcasting' %} selected{% endif %}>ツイキャス</option>
         </select>
       </label>
-      <label>アカウント <input name="account" maxlength="300" required autocomplete="off"
-             aria-describedby="account-help" autofocus></label>
+      <label>アカウント（必須） <input name="account" value="{{ values.get('account', '') }}" maxlength="300" required
+             autocomplete="off" aria-describedby="account-help{% if error %} editor-error-{{ suffix }}{% endif %}" autofocus></label>
       <small id="account-help">ユーザーID。TikTokは @ID とプロフィールURLも入力できます。</small>
     {% endif %}
-    <label>表示名 <input name="display_name" maxlength="128" value="{{ row.name if row else '' }}"></label>
+    {% if error %}<p id="editor-error-{{ suffix }}" class="error" role="alert">{{ error }}</p>{% endif %}
+    <label>表示名（任意） <input name="display_name" maxlength="128" value="{{ values.get('name', row.name if row else '') }}"{% if row %} autofocus{% endif %}></label>
     <div class="switches">
-      {{ switch("monitoring", "監視", row.monitoring if row else true, suffix) }}
-      {{ switch("recording", "録画", row.recording if row else true, suffix) }}
-      {{ switch("comments", "コメント収集", row.comments if row else true, suffix) }}
+      {{ switch("monitoring", "監視", values.get("monitoring", "1" if not row or row.monitoring else "0"), suffix) }}
+      {{ switch("recording", "録画", values.get("recording", "1" if not row or row.recording else "0"), suffix) }}
+      {{ switch("comments", "コメント収集", values.get("comments", "1" if not row or row.comments else "0"), suffix) }}
     </div>
-    <small>監視をOFFにすると録画・コメント収集も停止します。録画とコメント収集は個別に停止できます。</small>
+    {% if row %}
+    <small>監視をOFFにすると録画・コメント収集も停止します。録画とコメント収集は個別に停止できます。ONに戻しても録画の手動停止は維持します。</small>
+    {% endif %}
     <div class="dialog-actions">
+      <span class="muted" data-editor-status role="status">{{ "未保存の変更があります" if error else "" }}</span>
       <button type="button" data-dialog-close>キャンセル</button>
       <button type="submit">保存</button>
     </div>
