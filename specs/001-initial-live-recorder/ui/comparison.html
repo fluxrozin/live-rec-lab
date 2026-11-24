@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiveRecorder — 初期UI比較</title>
+<style>
+:root{color-scheme:light;font-family:"Yu Gothic UI","Meiryo","Noto Sans CJK JP",sans-serif;color:#222b35;background:#e8edf1;font-size:14px}
+*{box-sizing:border-box}
+body{margin:0}
+button,select{font:inherit}
+button,a,select,summary{outline-offset:4px}
+:focus-visible{outline:2px solid #176b8b}
+a{color:#105e79;text-underline-offset:3px}
+.switcher{display:flex;align-items:center;gap:22px;padding:12px 26px;background:#233641;color:#fff}
+.switcher strong{letter-spacing:.04em;white-space:nowrap}
+.tabs{display:flex;gap:7px;flex-wrap:wrap}
+.tabs button{border:1px solid #75868d;padding:7px 12px;color:#fff;background:transparent;border-radius:5px;cursor:pointer}
+.tabs button[aria-pressed=true]{background:#fff;color:#233641;border-color:#fff;font-weight:700}
+.fixture{margin-left:auto;color:#dde8ec;font-size:12px;white-space:nowrap}
+.shell{min-height:calc(100vh - 58px);background:#f7f8fa}
+.brand{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:750;letter-spacing:-.03em;white-space:nowrap}
+.logo{display:inline-grid;place-items:center;width:28px;height:28px;border:1px solid #b7c6cb;border-radius:7px;background:#fff}
+.logo::after{content:"";width:9px;height:9px;border-radius:50%;background:#b42842}
+nav{display:flex;gap:20px}
+nav section{display:flex;gap:5px}
+nav h2{color:#576571;font-size:11px;letter-spacing:.04em;margin:0 0 4px;font-weight:600}
+nav span{display:block;white-space:nowrap;padding:7px 8px;font-size:12px}
+nav .current{font-weight:750;color:#0c5868;background:#e1eef0;border-radius:4px}
+main{min-width:0}
+.page-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:20px}
+h1,h2,p,dl,dd{margin:0}
+h1{font-size:30px;letter-spacing:-.055em;font-weight:750}
+h2{font-size:15px;font-weight:750}
+time,.muted,.label{color:#52616c;font-size:12px}
+time,.num{font-variant-numeric:tabular-nums}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #d6e0e4;background:#fff}
+.kpis div{padding:16px}
+.kpis div+div{border-left:1px solid #d6e0e4}
+.kpis dt{font-size:12px;font-weight:650}
+.kpis dd{font-size:32px;line-height:1.1;letter-spacing:-.05em;margin-top:7px}
+.green{color:#237144}.red{color:#a7233d}.blue{color:#175b9c}.amber{color:#82521a}
+.panel{background:#fff;border:1px solid #dbe3e8;min-width:0}
+.panel h2{padding:14px 15px}
+.section-head{display:flex;justify-content:space-between;align-items:center;padding-right:15px;gap:8px}
+.section-head a{font-size:12px;white-space:nowrap}
+.sessions{margin-top:18px}
+.table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;text-align:left;font-size:13px}
+th,td{padding:12px 14px;border-top:1px solid #e1e7eb;vertical-align:middle}
+th{font-size:11px;color:#52616c;background:#f4f7f8;white-space:nowrap}
+td:not(:first-child){white-space:nowrap}
+td a{font-weight:700}
+.sub{display:block;margin-top:4px;color:#52616c;font-size:11px}
+.warning{display:flex;gap:12px;align-items:center;padding:12px 14px;background:#fff3dc;color:#764812;border-left:3px solid #b17528}
+.warning span{font-size:12px}
+.warning a{margin-left:auto;font-size:12px;white-space:nowrap}
+.secondary{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px}
+.secondary .panel{min-height:185px}
+.rows{padding:0 15px 13px}
+.metric{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid #e2e7eb;font-size:12px}
+.metric strong{white-space:nowrap}
+.history td{padding:9px 12px;font-size:12px}
+.health{display:flex;align-items:center;flex-wrap:wrap;gap:9px 15px;margin-top:13px;padding:10px 0;border-top:1px solid #d9e1e6;font-size:12px;color:#4c5b65}
+.health h2{font-size:12px}
+.mock-details{margin:16px 0;color:#52616c;font-size:12px}
+.mock-details section{border:1px solid #d6e0e4;background:#fff;margin-top:8px;padding:14px}
+.mock-details section:target{border-color:#4c8493}
+.mock-details p{margin-top:7px}
+select{border:1px solid #b6c3cb;border-radius:4px;background:#fff;color:#26343b;padding:3px}
+.a{display:grid;grid-template-columns:192px minmax(0,1fr)}
+.a .chrome{padding:26px 16px;background:#eff3f4;border-right:1px solid #d7e0e4}
+.a nav,.a nav section{flex-direction:column}
+.a nav{margin-top:34px}
+.a nav h2{padding-left:8px}
+.a main{padding:29px 30px 23px}
+.a .workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(224px,25%);gap:15px;margin-top:17px;align-items:start}
+.a .sessions{margin-top:0}
+.a .rail{display:grid;gap:12px}
+.a .secondary{grid-template-columns:1fr}
+.a .history{margin-top:16px}
+.b .chrome{background:#fff;border-bottom:1px solid #dce4e6;padding:13px 28px;display:flex;align-items:center;gap:28px}
+.b nav section{flex-wrap:wrap;align-items:center}
+.b nav h2{margin:0 5px 0 0}
+.b main{max-width:1180px;margin:auto;padding:26px 25px}
+.b .kpis{border:0;border-bottom:1px solid #d6e0e4;background:transparent}
+.b .kpis div:first-child{padding-left:0}
+.b .workspace{margin-top:16px}
+.b .sessions{margin-top:0}
+.b .rail{margin-top:12px}
+.b .secondary{margin:12px 0}
+.b .kpis dd{font-size:26px}
+.b .sessions td,.b .sessions th{padding-block:10px}
+.c{background:#f3f6f6}
+.c .chrome{border-bottom:1px solid #d5e1df;background:#fff;padding:13px 24px}
+.c .frame{display:grid;grid-template-columns:155px minmax(0,1fr);max-width:1500px;margin:auto}
+.c nav,.c nav section{flex-direction:column}
+.c nav{padding:28px 12px}
+.c nav h2{padding-left:8px}
+.c main{padding:24px 23px;border-left:1px solid #dbe5e4}
+.c .kpis{border:0;border-radius:6px;background:#e6eeec}
+.c .kpis div+div{border-color:#cddcda}
+.c .kpis dd{font-size:28px}
+.c .workspace{margin-top:16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,25%);align-items:start;gap:15px}
+.c .rail{display:grid;gap:12px}
+.c .secondary{grid-template-columns:1fr}
+.c .sessions{margin-top:0;background:transparent;border:0}
+.c .sessions h2{padding:0 0 9px}
+.c .cards{display:grid;gap:8px}
+.c .session-card{background:#fff;border:1px solid #d5e0df;border-left:3px solid #3c8a5d;padding:13px;min-width:0}
+.c .subject{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.c .subject a{font-weight:750}
+.c .states{display:flex;flex-wrap:wrap;gap:7px 15px;font-size:12px;margin-top:10px}
+.c .history{margin-top:14px}
+@media(max-width:1100px){.fixture{display:none}.a{grid-template-columns:151px minmax(0,1fr)}.a main,.c main{padding:21px 16px}.a .workspace,.c .workspace{grid-template-columns:1fr}.a .secondary,.c .secondary{grid-template-columns:1fr 1fr}.b .chrome{align-items:flex-start;gap:12px;flex-direction:column}.b nav{gap:8px}.b nav span{padding:6px}}
+@media(max-width:760px){.switcher{flex-wrap:wrap;gap:8px;padding:10px}.a,.c .frame{display:block}.a .chrome{padding:12px}.a nav,.c nav{margin-top:8px;padding:4px;flex-direction:row;overflow-x:auto}.a nav section,.c nav section{flex-direction:row}.a nav h2,.c nav h2{display:none}.secondary,.a .secondary,.c .secondary{grid-template-columns:1fr}.kpis div{padding:9px}.kpis dd{font-size:24px}.page-head{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<header class="switcher">
+  <strong>初期UI比較</strong>
+  <div class="tabs" role="group" aria-label="比較する案">
+    <button type="button" data-layout="a">A　運用一覧</button>
+    <button type="button" data-layout="b">B　全幅テーブル</button>
+    <button type="button" data-layout="c">C　セッションカード</button>
+  </div>
+  <span class="fixture">架空データ・閲覧用</span>
+</header>
+<div id="preview"></div>
+<script>
+const nav = `<nav aria-label="主要ナビゲーション">
+<section><h2>運用・データ</h2><span class="current" aria-current="page">ダッシュボード</span><span>配信者一覧</span><span>録画履歴</span><span>コメント</span><span>音声字幕</span></section>
+<section><h2>管理</h2><span>システム状態</span><span>ログ</span><span>設定</span></section></nav>`;
+const brand = '<div class="brand"><span class="logo" aria-hidden="true"></span>LiveRecorder</div>';
+const heading = '<header class="page-head"><h1>ダッシュボード</h1><time datetime="2026-11-24T21:42:08+09:00">表示時点 21:42:08 JST</time></header>';
+const kpis = '<dl class="kpis">' + [['監視対象','12',''],['配信中','2','green'],['録画中','1','red'],['コメント収集中','2','blue']].map(([label,count,color]) => `<div><dt>${label}</dt><dd class="num ${color}">${count}</dd></div>`).join('') + '</dl>';
+const active = [
+ {id:'yoru', name:'夜舟ラジオ', service:'TikTok LIVE', title:'夜の選曲室', recording:'<span class="red">● 録画中</span>', comments:'126', start:'21:18', duration:'24分'},
+ {id:'mori', name:'森の作業部屋', service:'ツイキャス', title:'紙とインクの夜', recording:'<span class="amber">△ 保存待機</span>', comments:'53', start:'21:29', duration:'13分'}
+];
+const live = '<span class="green">● 配信中</span>';
+const comments = item => `<span class="blue">● 収集中</span> <span class="muted">${item.comments}件</span>`;
+const detailsLink = item => `<a href="#${item.id}">${item.name}</a><span class="sub">${item.service} · ${item.title}</span>`;
+const table = `<div class="table-wrap"><table><thead><tr><th>配信者・タイトル</th><th>配信</th><th>録画</th><th>コメント</th><th>開始・経過</th></tr></thead>
+<tbody>${active.map(item=>`<tr><td>${detailsLink(item)}</td><td>${live}</td><td>${item.recording}</td><td>${comments(item)}</td><td><time>${item.start}</time><span class="sub">${item.duration}</span></td></tr>`).join('')}</tbody></table></div>`;
+const cards = '<div class="cards">' + active.map(item=>`<article class="session-card"><div class="subject"><div>${detailsLink(item)}</div><time>${item.start} · ${item.duration}</time></div><div class="states">${live}${item.recording}<span>${comments(item)}</span></div></article>`).join('') + '</div>';
+const warning = '<aside class="warning"><span aria-hidden="true">△</span><div><strong>保存先の空き容量が少なくなっています</strong><br><span>録画1件が待機 · 確認 21:40 JST</span></div><a href="#storage">保存先を見る</a></aside>';
+const metric = (label, value) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`;
+const secondary = `<div class="secondary"><section class="panel" id="storage"><h2>保存容量</h2><div class="rows">
+${metric('Windows側の空き','18 GB / 512 GB')}${metric('管理対象の動画・字幕','284 GB')}${metric('夜舟ラジオ / 森の作業部屋','84 GB / 52 GB')}${metric('その他','148 GB')}
+<p class="muted">D:／LiveRecorder · 21:40 JST · 未確認 0件</p></div></section>
+<section class="panel"><h2>今日の取得</h2><div class="rows">${metric('録画','5件')}${metric('コメント','1,284件')}${metric('音声字幕 待機','2件')}${metric('障害集計（24時間）','警告1件・エラー0件')}<p class="muted">集計期間の全範囲を確認済み</p></div></section></div>`;
+const history = `<section class="panel history"><h2>最近の録画</h2><div class="table-wrap"><table><thead><tr><th>セッション</th><th>開始</th><th>録画</th><th>コメント</th></tr></thead><tbody>
+<tr><td><a href="#aoi">青井スケッチ</a><span class="sub">ツイキャス · 港の風景</span></td><td>20:06</td><td class="green">✓ 保存済み</td><td>184件</td></tr>
+<tr><td><a href="#sora">空庭クラフト</a><span class="sub">TikTok LIVE · 木工の続き</span></td><td>19:22</td><td class="amber">△ 一部取得</td><td>未収集</td></tr></tbody></table></div></section>`;
+const health = '<div class="health"><h2>環境</h2><span>WSL2 · Python 3.12 · SQLite · FFmpeg</span><span class="amber">音声推論 未確認</span></div>';
+const detailItems = [...active, {id:'aoi', name:'青井スケッチ',title:'港の風景'}, {id:'sora', name:'空庭クラフト',title:'木工の続き'}];
+const details = `<div class="mock-details">${detailItems.map(item=>`<section id="${item.id}" hidden tabindex="-1"><h2>${item.name} · ${item.title}</h2><p>比較用のセッション詳細</p></section>`).join('')}</div>`;
+const sessions = body => `<section class="panel sessions"><h2>稼働中セッション</h2>${body}</section>`;
+const layouts = {
+ a: `<div class="chrome">${brand}${nav}</div><main>${heading}${kpis}<div class="workspace"><div>${sessions(table)}${history}</div><div class="rail">${warning}${secondary}</div></div>${health}${details}</main>`,
+ b: `<div class="chrome">${brand}${nav}</div><main>${heading}${kpis}<div class="workspace">${sessions(table)}<div class="rail">${warning}</div>${secondary}${history}</div>${health}${details}</main>`,
+ c: `<div class="chrome">${brand}</div><div class="frame">${nav}<main>${heading}${kpis}<div class="workspace"><div>${sessions(cards)}${history}</div><div class="rail">${warning}${secondary}</div></div>${health}${details}</main></div>`
+};
+const preview = document.querySelector('#preview');
+const buttons = [...document.querySelectorAll('[data-layout]')];
+function render(layout) {
+  preview.className = 'shell ' + layout;
+  preview.innerHTML = layouts[layout];
+  for (const button of buttons) button.setAttribute('aria-pressed', String(button.dataset.layout === layout));
+}
+for (const button of buttons) button.addEventListener('click', () => render(button.dataset.layout));
+preview.addEventListener('click', event => {
+  const link = event.target.closest('a');
+  if (!link) return;
+  const target = document.getElementById(link.hash.slice(1));
+  if (!target?.hidden) return;
+  event.preventDefault();
+  target.hidden = false;
+  target.focus();
+});
+const requested = new URLSearchParams(location.search).get('layout');
+render(['a','b','c'].includes(requested) ? requested : 'a');
+</script>
+</body>
+</html>
