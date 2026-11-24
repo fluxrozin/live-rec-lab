@@ -2,7 +2,7 @@
 
 ## 作業・安全性・仕様の入口
 
-- 確定要件は `requirements.md`、UI/UXは `docs/UI_UX.md` を正本とする。`docs/design/` は設計参考、`docs/ARCHITECTURE.md`・`CONFIGURATION.md`・`INSTALL_WSL2.md`・`TROUBLESHOOTING.md`・`LIMITATIONS.md` は実装前と関係する実装タスクで確認し、古い試作結果を現在の機能と取り違えない。詳細な実行順と優先順位は `docs/prompts/master.md` に従う。
+- 確定要件は `requirements.md`、UI/UXは `docs/UI_UX.md` を正本とする。`docs/design/` は設計参考、`docs/ARCHITECTURE.md`・`CONFIGURATION.md`・`INSTALL_WSL2.md`・`TROUBLESHOOTING.md`・`LIMITATIONS.md` は実装前と関係する実装タスクで確認し、古い試作結果を現在の機能と取り違えない。**全体実装時**の詳細な実行順と優先順位は `docs/prompts/master.md` に従う。**完成後のUIだけのリデザインでは `docs/UI_UX.md` を単独の実行入口とし**、Spec Kit全工程や非UIのバックエンドを再実装しない。UI案3つの利用者承認がない限り本番UIへ適用せず、承認後の `docs/ui/DESIGN.md` は原本に従属する。
 - Git操作前にブランチと変更を確認する。`main` への変更は利用者の明示許可が必要。許可なくブランチ作成・切替、破壊的なGit操作、commit・push・mergeをしない。Spec Kitフックにも同じ制約を適用する。
 - Spec KitのFeature選択はブランチ名から推測しない。初回は `.specify/feature.json` が示す `specs/001-initial-live-recorder` を用い、既存 `spec.md` があれば `speckit-specify` によるテンプレート上書きを禁止する。
 - `speckit-analyze` は読取専用で、同Skillの検出後に修正するには必要な利用者承認を得る。`speckit-converge` は `tasks.md` への追記専用とし、原本起点の追跡監査を別途行う。
