@@ -9,7 +9,7 @@
 ## Phase 2 — 隔離と共通基盤
 
 - [x] T004 専用一時領域の初期化、所有・パス検証、排他、構造化ログを実装・検証する（FR-007、FR-008、`data-model.md` の `SystemEvent.correlation_id`） `src/live_rec_lab/isolation.py` `tests/test_isolation.py`
-- [ ] T005 隔離CLI、SQLiteとfixture経路、通常／隔離の境界・固定ポートを実装する（FR-007、FR-008、FR-010、`data-model.md` の `RuntimeConfig.web_port`）。通常境界と起動はT015で確認する `src/live_rec_lab/cli.py` `src/live_rec_lab/runtime.py` `src/live_rec_lab/db.py` `tests/test_fixture.py` `tests/test_runtime.py`
+- [x] T005 隔離CLI、SQLiteとfixture経路、通常／隔離の境界・固定ポートを実装する（FR-007、FR-008、FR-010、`data-model.md` の `RuntimeConfig.web_port`）。通常境界と起動はT015で確認する `src/live_rec_lab/cli.py` `src/live_rec_lab/runtime.py` `src/live_rec_lab/db.py` `tests/test_fixture.py` `tests/test_runtime.py`
 
 ## Phase 3 — US1 配信収集（P1）
 
@@ -23,7 +23,7 @@
 
 ## Phase 4 — US2 履歴・字幕・Web（P2）
 
-- [ ] T011 [P] [US2] 音声ジョブ・発話検索・音声SRT・統合ASSを実装・隔離検証する（FR-005、`data-model.md` の `SpeechCue.offset_range` と `SubtitlePublication.input_generation`） `src/live_rec_lab/speech.py` `src/live_rec_lab/subtitles.py` `tests/test_speech.py`
+- [x] T011 [P] [US2] 音声ジョブ・発話検索・音声SRT・統合ASSを実装・隔離検証する（FR-005、`data-model.md` の `SpeechCue.offset_range` と `SubtitlePublication.input_generation`） `src/live_rec_lab/speech.py` `src/live_rec_lab/subtitles.py` `tests/test_speech.py`
 - [ ] T012 [P] [US2] 採用案非依存の検索・詳細・設定・保守のデータ契約、HTTP防御とモード制御を実装する（FR-004〜008） `src/live_rec_lab/web/app.py` `tests/test_web.py`
 - [x] T013 [US2] 明示選択後に共通シェルと主要8画面、詳細、操作・状態表現を実装する（FR-006） `src/live_rec_lab/web/templates/` `src/live_rec_lab/web/static/`
 - [x] T014 [US2] 1440／1024と両フォント、代表動線、空・異常・更新競合を隔離ブラウザで確認する（FR-006、FR-007） `tests/test_web.py` `specs/001-initial-live-recorder/ui/design.md`
@@ -40,7 +40,7 @@
 
 ## Phase 6 — 統合
 
-- [ ] T018 全AC／TCを機能単位で照合し、機能別の実装・検証・利用可否と残課題を記録する `specs/001-initial-live-recorder/traceability.md` `README.md` `manual/README.md`
+- [x] T018 全AC／TCを機能単位で照合し、機能別の実装・検証・利用可否と残課題を記録する `specs/001-initial-live-recorder/traceability.md` `README.md` `manual/README.md`
 
 ## Dependencies & Execution Order
 
@@ -52,13 +52,14 @@ T002は計画直後に独立実施。T004 → T005の最小隔離 → T006／T00
 
 ## 再開点
 
-- 到達度は要求§17.5のL1。T001・T002・T004・T006〜T009の隔離実装と代表試験を完了した。T006の通常Windows媒体確定はT017の対象。
-- 2026-11-24に利用者がA 運用一覧を明示選択。隔離の主要8画面と代表ブラウザ検証（T013・T014）を完了。[UI設計記録](ui/design.md)。
-- T005は、専用`/tmp`のCLI・SQLite、隔離HTTP起動と固定ポートの保存まで。通常運用との境界は残件。T010は両サービスの模擬収集、状態判定・監視取得候補、ツイキャスのページ取得、チェックポイント・受信済みコメントの独立保存まで。実配信ワーカーへの統合・署名・通常の実HLSの採用検証は残件。
-- T011は隔離の永続キュー、別プロセスの音声抽出・オフライン推論起動、設定保存、予約／再予約、世代付き字幕再生成・公開復旧まで。FFmpeg実抽出と模擬認識で確認。通常ワーカーのライフサイクル、ASSの独立ジョブ化、承認済みモデルと実機での実認識は残件。
-- T012は隔離での配信者登録・編集・論理削除、履歴・コメント読取、HTTP防御、ダッシュボード集計、ログ読取、表示・音声・ポート設定の保存まで。録画・監視設定や手動照合の操作契約は残件。T015は隔離サーバーの固定ポート・所有確認付きURL／停止・読取診断まで。通常運用の起動、Windows自動起動、ログ世代管理等は残件。
-- T016は隔離のSQLite Online Backup、コメント期限処理、字幕改版台帳・復旧、停止中のDB手動復元と差戻しまで。通常DBに対する復元・予算照合と、一般媒体・容量削除は残件。T017の実配信・署名通信・Windows・GPU検証は未実施。
-- 次の独立作業はT010の監視・実収集ワーカー統合、T011の音声ワーカー常駐とASS独立処理、T012の機能別設定と操作契約。実配信・モデル取得や通常媒体の有効化は要求の該当許可・実機条件が揃ってから行う。
+- L1到達。両サービスの模擬経路、3種の字幕、主要8画面、運用CLIと隔離保守を実装・検証した。実配信録画・通常Windows媒体・未実装MUSTが残るためL2は部分到達。
+- T005とT015では通常／開発者の設定・管理領域分離、8082／8083、所有確認付き起動・停止、読取診断を一時データで確認。T015の残件はWindowsログオンタスク登録・再起動・ロック中の実測と、詳細診断。
+- T010は両サービスで模擬検知からローカルHLS録画、SQLiteコメント、コメントSRTまで接続した。実配信録画入力・署名、参照先検証、プリロール、欠損の実運用は残件。
+- T011は独立した音声・ASSジョブ、世代確認と再生成、発話検索を隔離検証。T017でモデルの取得とCPU英語／CUDA英語・日本語の既知音声認識を確認。外部プレイヤー同期と長時間負荷は未検証。
+- T012は運用設定、媒体削除、ストレージ照合のWeb操作を追加。録画品質・エンジン選択、停止指示、コメントSRTの設定変更と再同期、配信者カスタム順等が残件。
+- T016は隔離でのファイルのみ／ファイル＋履歴削除、自動容量・期限処理、世代付き台帳と中断復旧、DB手動復元の準備・照合・差戻しを確認。Windows専用試験で録画確定の非上書きを確認した。削除退避方式がWindowsで成立しなかったため通常媒体を保留。通常DBの媒体・外部予算横断での復元実測も残件。
+- T017の実配信は対象指定済み。専用設定、外部枠の共同利用確認、終了条件の確定と採用経路の安全条件を揃えてから行う。
+- T018では正本の全83 AC・111 TCを機能群へ割り当て、実装・確認結果・利用保留を[追跡表](traceability.md)に記録した。
 
 ## 検証記録
 
@@ -71,3 +72,5 @@ T002は計画直後に独立実施。T004 → T005の最小隔離 → T006／T00
 
 - 残作業を再開後、外部接続を使わない並列pytest 74件とRuff／JavaScript構文チェックが通過。Chromiumで音声設定、予約、隔離CLIワーカーによるモデル不足時の保留と既存字幕の維持を確認。実配信、署名通信、モデル取得、実音声認識、Windows媒体への書込みと実復元は未実施。
 - 固定ポートと停止中の隔離DB復元を追加後、並列pytest 85件が通過。serial対象なし。Chromiumの1024px・1440pxで次回ポートの保存、稼働ポートの維持、再起動要否を確認。異なるDB・WAL付きDBの再開拒否と退避DBへの差戻しを一時領域で確認した。
+- 中断からの再開後、最新の並列pytest 135件が通過。serial対象なし。Chromiumの1024px・1440pxで固定ポートと運用設定の保存、隔離のストレージ照合・削除を確認。通常ルートの公開範囲と開発者Swagger UI／ReDocのローカル資産を確認した。
+- `large-v3` を固定リビジョンから取得し、CPU・CUDAの推論、合成日本語の音声SRTと統合ASS、FFplayの無画面再生を確認。Windowsの録画確定試験と利用保留は[追跡表](traceability.md)に記録した。

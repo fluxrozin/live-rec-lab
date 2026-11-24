@@ -40,6 +40,8 @@ def collect_comment_pages(
             expected_total = page.total_count
         reached = False
         for comment in page.comments:
+            if comment.source_id is None:
+                return CommentBatch(tuple(observed.values()), previous_id, False, "missing_comment_id")
             if comment.source_id == previous_id:
                 reached = True
                 break

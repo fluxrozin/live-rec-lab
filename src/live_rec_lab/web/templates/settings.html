@@ -6,14 +6,34 @@
     <a href="#speech">音声字幕</a><a href="#display">表示</a><a href="#advanced">詳細設定</a>
   </nav>
   <div class="settings-sections">
+    <form id="operations-settings" class="preferences-form" data-api="/api/v1/settings/operations" data-method="PUT" data-message="operations-message" data-success="監視・保存・コメントの設定を保存しました。" action="#" method="dialog">
+      <input type="hidden" name="revision" value="{{ operations.revision }}">
+    </form>
     <section class="panel" id="monitor"><div class="section-head"><h2>監視</h2></div>
-      <dl class="metrics"><div><dt>外部配信の監視</dt><dd>停止（隔離）</dd></div><div><dt>サービス共有上限</dt><dd>TikTok LIVE 10回／分 · ツイキャス 60回／分</dd></div></dl>
+      <div class="metrics">
+        <label>TikTok LIVE（回／分）<input form="operations-settings" name="tiktok_per_minute" type="number" min="0" max="10" step="any" value="{{ operations.tiktok_per_minute }}" required></label>
+        <label>ツイキャス（回／分）<input form="operations-settings" name="twitcasting_per_minute" type="number" min="0" max="60" step="any" value="{{ operations.twitcasting_per_minute }}" required></label>
+      </div>
     </section>
     <section class="panel" id="storage"><div class="section-head"><h2>録画・保存</h2></div>
-      <dl class="metrics"><div><dt>保存先</dt><dd>隔離専用のLinux領域</dd></div><div><dt>容量の確認</dt><dd><a href="/system#storage">システム状態へ</a></dd></div></dl>
+      <dl class="metrics"><div><dt>実効保存先</dt><dd>{{ recording_root }}</dd></div><div><dt>容量の確認</dt><dd><a href="/system#storage">システム状態へ</a></dd></div></dl>
+      <div class="metrics">
+        {% if app_mode == 'normal' %}<label>録画先（WSL絶対パス）<input form="operations-settings" name="recording_root" value="{{ operations.recording_root or '' }}" placeholder="{{ recording_root }}" autocomplete="off"></label>{% endif %}
+        <label>最低空き容量（GiB）<input form="operations-settings" name="minimum_free_gib" type="number" min="0" max="1000000" step="any" value="{{ operations.minimum_free_gib }}" required></label>
+        <label>録画容量上限（GiB・0は無制限）<input form="operations-settings" name="maximum_recording_gib" type="number" min="0" max="1000000" step="any" value="{{ operations.maximum_recording_gib }}" required></label>
+        <label>録画保持日数（0は無期限）<input form="operations-settings" name="video_retention_days" type="number" min="0" max="36500" step="1" value="{{ operations.video_retention_days }}" required></label>
+        <label><input form="operations-settings" name="auto_delete_enabled" type="checkbox"{% if operations.auto_delete_enabled %} checked{% endif %}> 録画と字幕の自動削除</label>
+      </div>
     </section>
     <section class="panel" id="comments"><div class="section-head"><h2>コメント・SRT</h2></div>
-      <dl class="metrics"><div><dt>コメント字幕の表示秒数</dt><dd>4秒</dd></div><div><dt>自動期限処理</dt><dd>停止（隔離）</dd></div></dl>
+      <div class="metrics">
+        <label><input form="operations-settings" name="comments_globally_enabled" type="checkbox"{% if operations.comments_globally_enabled %} checked{% endif %}> コメント収集を有効にする</label>
+        <label>コメント保持日数（0は無期限）<input form="operations-settings" name="comment_retention_days" type="number" min="0" max="36500" step="1" value="{{ operations.comment_retention_days }}" required></label>
+      </div>
+      <p class="muted">コメントの期限処理はコメントSRTと統合ASSも削除します。録画と音声SRTは保持します。</p>
+      <label><input form="operations-settings" name="confirmed" type="checkbox"> 削除の有効化または対象範囲の拡大を確認した</label>
+      <p id="operations-message" class="form-message" role="status" hidden></p>
+      <div class="form-actions"><button form="operations-settings" type="submit" class="button primary">運用設定を保存</button></div>
     </section>
     <section class="panel" id="speech"><div class="section-head"><h2>音声字幕</h2></div>
       <form class="preferences-form" data-api="/api/v1/settings/speech" data-method="PUT" data-success="音声字幕の設定を保存しました。" action="#" method="dialog">

@@ -1,9 +1,11 @@
 import sqlite3
 import wave
 from contextlib import closing
+from threading import Event
 
 import pytest
 
+from live_rec_lab.ass_jobs import process_ass
 from live_rec_lab.collection import run_fixture
 from live_rec_lab.db import connect
 from live_rec_lab.isolation import FixtureWorkspace
@@ -40,6 +42,8 @@ def test_queue_is_durable_and_repeated_enqueue_reuses_waiting_attempt(tmp_path):
     assert done.state == "completed"
     assert speech_attempts(workspace)[0].id == first.id
     assert "音声ジョブの試験" in video.with_name(video.stem + "_speech.srt").read_text()
+    assert not video.with_suffix(".ass").exists()
+    assert process_ass(workspace).state == "completed"
     assert "音声ジョブの試験" in video.with_suffix(".ass").read_text()
     assert process_speech(workspace, infer) is None
 
@@ -131,12 +135,14 @@ def test_retry_replaces_only_verified_prior_subtitles_and_can_finish_without_spe
     revised = process_speech(workspace, lambda *_: [SpeechCue(500, 1000, "置き換えた発話")])
     assert revised.state == "completed"
     assert "置き換えた発話" in old_srt.read_text()
+    assert process_ass(workspace).state == "completed"
     assert "置き換えた発話" in video.with_suffix(".ass").read_text()
 
     enqueue_speech(workspace, 1)
     no_speech = process_speech(workspace, lambda *_: [])
     assert no_speech.state == "no_speech"
     assert not old_srt.exists()
+    assert process_ass(workspace).state == "completed"
     assert "こんばんは" in video.with_suffix(".ass").read_text()
 
 
@@ -161,7 +167,7 @@ def test_comment_expiry_blocks_ass_only_and_keeps_new_speech(tmp_path):
 
     assert result.id == queued.id
     assert result.state == "completed"
-    assert result.reason == "ass_retention_blocked"
+    assert process_ass(workspace, automatic=True) is None
     assert not video.with_suffix(".ass").exists()
     assert "音声のみ" in video.with_name(video.stem + "_speech.srt").read_text()
 
@@ -304,3 +310,72 @@ def test_explicit_request_can_run_a_queued_automatic_job_when_automatic_is_off(t
     assert manual.id == waiting.id
     assert manual.origin == "manual" and manual.device == "cpu"
     assert process_speech(workspace, lambda *_: []).state == "no_speech"
+
+
+def test_speech_stop_does_not_publish_and_automatic_recovery_is_bounded(tmp_path):
+    workspace, video = recorded(tmp_path)
+    enqueue_speech(workspace, 1)
+
+    for depth in range(3):
+        stop = Event()
+
+        def interrupt(*_):
+            stop.set()
+            return [SpeechCue(500, 1000, "stopped before publication")]
+
+        stopped = process_speech(workspace, interrupt, stop=stop)
+        assert stopped.state == "interrupted"
+        assert stopped.recovery_depth == depth
+        assert not video.with_name(video.stem + "_speech.srt").exists()
+
+    assert process_speech(workspace, lambda *_: []) is None
+    assert speech_attempts(workspace)[0].state == "failed"
+    assert speech_attempts(workspace)[0].reason == "automatic_retry_exhausted"
+
+
+def test_cuda_child_uses_only_library_dirs_from_current_interpreter(tmp_path, monkeypatch):
+    from live_rec_lab import speech_worker
+
+    site = tmp_path / "site-packages"
+    cublas = site / "nvidia" / "cublas" / "lib"
+    cudnn = site / "nvidia" / "cudnn" / "lib"
+    cublas.mkdir(parents=True)
+    cudnn.mkdir(parents=True)
+    monkeypatch.setattr(speech_worker.sysconfig, "get_path", lambda key: str(site))
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/outside")
+
+    assert speech_worker._cuda_library_dirs().split(":") == [str(cublas), str(cudnn)]
+
+
+def test_speech_stop_reaps_owned_child(tmp_path, monkeypatch):
+    import sys
+    from threading import Timer
+
+    from live_rec_lab import speech_worker
+
+    workspace, video = recorded(tmp_path)
+    enqueue_speech(workspace, 1)
+    stop = Event()
+    children = []
+    spawn = speech_worker.subprocess.Popen
+    timer = Timer(0.1, stop.set)
+
+    def use_waiting_child(_, **options):
+        child = spawn([sys.executable, "-I", "-c", "import time; time.sleep(30)"], **options)
+        children.append(child)
+        timer.start()
+        return child
+
+    monkeypatch.setattr(speech_worker.subprocess, "Popen", use_waiting_child)
+    try:
+        result = process_speech(workspace, stop=stop)
+    finally:
+        timer.cancel()
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+
+    assert result.state == "interrupted"
+    assert len(children) == 1 and children[0].returncode is not None
+    assert not video.with_name(video.stem + "_speech.srt").exists()

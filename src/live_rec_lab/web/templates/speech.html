@@ -1,46 +1,86 @@
 {% extends "base.html" %}
 {% from "components.html" import pager, platform_pick, state %}
-{% block actions %}<a class="button secondary" href="/speech/cues">発話本文を検索</a>{% endblock %}
+{% block actions %}
+<a class="button secondary" href="/speech/cues">発話本文を検索</a>
+<button class="button secondary" type="button" data-open="retry-failed-speech">失敗した音声を一括再試行</button>
+{% endblock %}
 {% block content %}
 <form class="filters" action="/speech" method="get">
   <label>配信者・タイトル<input type="search" name="q" maxlength="256" value="{{ q }}"></label>
   {{ platform_pick(platform) }}
+  {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}">{% endif %}
+  {% for name, title, labels, selection in [('speech_state', '音声の状態', speech_labels, speech_state), ('ass_state', 'ASSの状態', ass_labels, ass_state)] %}
+    <label>{{ title }}<select name="{{ name }}">
+      <option value="">すべて</option>
+      {% for value, label in labels.items() %}<option value="{{ value }}"{% if value == selection %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+  {% endfor %}
   <button type="submit" class="button secondary">絞り込む</button>
 </form>
 <section class="panel">
-  <div class="section-head"><h2>セッション別の字幕</h2><span class="muted">{{ result.total }}件</span></div>
+  <div class="section-head"><h2>録画セグメント別の字幕</h2><span class="muted">{{ result.total }}件</span></div>
+  {% if result.counts.speech or result.counts.ass %}
+  <dl class="metrics">
+    {% for category, title, labels in [('speech', '音声試行', speech_labels), ('ass', 'ASS試行', ass_labels)] %}
+      <div id="{{ category }}-queue-counts"><dt>{{ title }}</dt><dd>{% for value, count in result.counts[category].items() %}{{ labels.get(value, '未確認') }} {{ count }}件{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
+    {% endfor %}
+  </dl>
+  {% endif %}
   {% if result['items'] %}
   <div class="table-wrap"><table>
     <thead><tr><th scope="col">配信</th><th scope="col">セグメント</th><th scope="col">音声SRT</th><th scope="col">統合ASS</th><th scope="col">最新の音声試行</th><th scope="col">操作</th></tr></thead>
     <tbody>{% for row in result['items'] %}
-      {% for segment in row.segments or [none] %}
+      {% set segment = row.segment %}
       <tr>
         <td><a href="/recordings/{{ row.id }}">{{ row.title }}</a><span class="sub">{{ row.display_name or row.normalized_id }} · {{ row.platform | platform }}</span></td>
         <td>{{ segment.number if segment else '確定媒体なし' }}</td>
         <td>{{ state('subtitle', segment.statuses.get('speech', 'not_started') if segment else 'blocked') }}</td>
-        <td>{{ state('subtitle', segment.statuses.get('ass', 'not_started') if segment else 'blocked') }}</td>
+        <td>
+          {% set ass_state = segment.statuses.get('ass', 'not_started') if segment else 'blocked' %}
+          {% set ass_job = segment.ass_attempt if segment else none %}
+          {{ state('subtitle', ass_state) }}
+          {% if ass_job and ass_state not in ['expired', 'deleted', 'blocked'] %}
+            {% if ass_job.state != ass_state %}
+              <span class="sub">最新の試行 {{ state('subtitle', ass_job.state) }}</span>
+            {% endif %}
+            {% set ass_reasons = {'speech_pending': '音声の処理待ち', 'speech_previous_result': '以前の音声結果を使用', 'speech_unavailable': '音声結果を取得できません', 'comments_incomplete': 'コメントに未取得部分があります', 'comments_omitted': '同時表示の上限によりコメントを省略', 'generation_failed': '統合字幕の作成に失敗', 'publication_failed': '統合字幕を保存できません', 'input_generation_changed': '入力媒体の世代を確認できません', 'input_revision_changed': '入力が更新されました', 'worker_stopped': '処理が中断されました'} %}
+            {% if ass_job.reason in ass_reasons %}<span class="sub">{{ ass_reasons[ass_job.reason] }}</span>{% endif %}
+            {% if ass_job.omitted_comments %}<span class="sub">コメント {{ ass_job.omitted_comments }}件を省略</span>{% endif %}
+          {% endif %}
+        </td>
         <td>
           {% if segment and segment.speech_attempt %}
             {% set job = segment.speech_attempt %}
-            {% set labels = {'queued': '待機', 'running': '処理中', 'completed': '完了', 'no_speech': '発話なし', 'not_applicable': '音声なし', 'blocked': '保留', 'failed': '失敗', 'needs_review': '要確認', 'interrupted': '中断'} %}
-            {% set reasons = {'model_unavailable': 'ローカルモデルなし・不完全', 'inference_unavailable': '推論環境を利用できません', 'input_generation_changed': '動画が変わりました', 'speech_publication_failed': '音声SRTを公開できません', 'ass_publication_failed': '統合ASSを公開できません', 'ass_retention_blocked': 'コメント期限処理中または削除済み', 'ass_partial': '統合ASSに未取得部分があります', 'inference_error': '推論または音声抽出に失敗', 'worker_stopped': '処理が中断されました'} %}
-            {{ labels.get(job.state, '未確認') }}<span class="sub">{{ job.device | upper }} · {{ job.model }}</span>
+            {% set reasons = {'model_unavailable': 'ローカルモデルなし・不完全', 'inference_unavailable': '推論環境を利用できません', 'input_generation_changed': '動画が変わりました', 'speech_publication_failed': '音声SRTを公開できません', 'inference_error': '推論または音声抽出に失敗', 'worker_stopped': '処理が中断されました', 'automatic_retry_exhausted': '中断後の自動再試行が上限に達しました'} %}
+            {{ speech_labels.get(job.state, '未確認') }}<span class="sub">{{ job.device | upper }} · {{ job.model }}</span>
             {% if job.reason in reasons %}<span class="sub">{{ reasons[job.reason] }}</span>{% endif %}
           {% else %}<span class="muted">未投入</span>{% endif %}
         </td>
         <td>
-          {% if segment and segment.statuses.get('speech') == 'completed' %}<a href="/speech/cues?session_id={{ row.id }}">発話本文</a><span class="sub">{{ segment.speech_origin }}</span>{% endif %}
+          {% if segment and segment.statuses.get('speech') == 'completed' %}<a href="/speech/cues?session_id={{ row.id }}&amp;segment_id={{ segment.id }}">発話本文</a><span class="sub">{{ segment.speech_origin }}</span>{% endif %}
           {% if segment and segment.available and row.stream_state == 'ended' and row.recording_state in ['completed', 'partial', 'cancelled'] and not (segment.speech_attempt and segment.speech_attempt.state in ['queued', 'running']) %}
           <form data-api="/api/v1/segments/{{ segment.id }}/speech" data-method="POST" data-success="音声ジョブを待機列に追加しました。" action="#" method="dialog">
             <button class="link-button" type="submit">{{ '再生成を予約' if segment.statuses.get('speech') == 'completed' else '生成を予約' }}</button><p class="form-message" role="status" hidden></p>
           </form>
           {% endif %}
+          {% if segment and segment.available and row.stream_state == 'ended' and row.recording_state in ['completed', 'partial', 'cancelled'] and ass_state not in ['expired', 'blocked', 'deleted'] and not (ass_job and ass_job.state in ['queued', 'running']) %}
+          <form data-api="/api/v1/segments/{{ segment.id }}/ass" data-method="POST" data-success="統合ASSジョブを待機列に追加しました。" action="#" method="dialog">
+            <button class="link-button" type="submit">{{ '統合ASS再生成を予約' if ass_state in ['completed', 'partial', 'provisional'] else '統合ASS生成を予約' }}</button><p class="form-message" role="status" hidden></p>
+          </form>
+          {% endif %}
         </td>
       </tr>
-      {% endfor %}
     {% endfor %}</tbody>
   </table></div>
-  {% else %}<p class="empty">表示できる配信セッションがありません。</p>{% endif %}
+  {% else %}<p class="empty">条件に一致する録画セグメントがありません。</p>{% endif %}
 </section>
 {{ pager(result, request) }}
+<dialog id="retry-failed-speech" aria-labelledby="retry-failed-speech-title">
+  <form data-api="/api/v1/speech/retry-failed" data-method="POST" data-success="再試行の受付を確認しました。" action="#" method="dialog">
+    <h2 id="retry-failed-speech-title">失敗した音声ジョブを再試行</h2>
+    <label class="confirm"><input type="checkbox" name="confirmed" required>最新の音声試行に失敗した対象を一括で予約する</label>
+    <p class="form-message" role="status" hidden></p>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close autofocus>キャンセル</button><button type="submit" class="button primary">再試行を予約</button></div>
+  </form>
+</dialog>
 {% endblock %}

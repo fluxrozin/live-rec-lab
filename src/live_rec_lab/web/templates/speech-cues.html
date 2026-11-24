@@ -4,6 +4,12 @@
 {% block content %}
 <form class="filters" action="/speech/cues" method="get">
   {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}">{% endif %}
+  {% if segments %}
+  <label>録画セグメント<select name="segment_id">
+    <option value="0">すべて</option>
+    {% for segment in segments %}<option value="{{ segment.id }}"{% if segment.id == segment_id %} selected{% endif %}>{{ segment.number }}</option>{% endfor %}
+  </select></label>
+  {% endif %}
   <label>発話本文<input name="q" type="search" maxlength="256" value="{{ q }}"></label>
   <label>時刻順<select name="order"><option value="asc"{% if order == 'asc' %} selected{% endif %}>古い順</option><option value="desc"{% if order == 'desc' %} selected{% endif %}>新しい順</option></select></label>
   <button class="button secondary" type="submit">検索</button>
@@ -14,7 +20,7 @@
   {% if result['items'] %}
   <div class="table-wrap"><table><thead><tr><th scope="col">録画内時刻</th><th scope="col">本文</th><th scope="col">配信</th></tr></thead>
   <tbody>{% for row in result['items'] %}<tr><td><span class="numeric">{{ row.start }}</span><span class="sub numeric">{{ row.end }}まで</span></td>
-  <td class="multiline">{{ row.body }}<span class="sub">{{ row.origin }}</span></td><td><a href="/recordings/{{ row.session.session_id }}">{{ row.session.title }}</a></td></tr>{% endfor %}</tbody></table></div>
+  <td class="multiline">{{ row.body }}<span class="sub">{{ row.origin }}</span></td><td><a href="/recordings/{{ row.session.session_id }}?speech_query={{ request.url.query | urlencode }}">{{ row.session.title }}</a></td></tr>{% endfor %}</tbody></table></div>
   {% else %}<p class="empty">条件に一致する発話がありません。</p>{% endif %}
 </section>
 {{ pager(result, request) }}

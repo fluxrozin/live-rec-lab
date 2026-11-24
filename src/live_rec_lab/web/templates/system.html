@@ -7,8 +7,8 @@
     <dl class="metrics">
       <div><dt>データベース</dt><dd>{{ '整合性確認済み' if diagnosis.database.integrity == 'ok' else '要確認' }}</dd></div>
       <div><dt>セッション</dt><dd>{{ diagnosis.database.sessions }}件</dd></div>
-      <div><dt>外部配信接続</dt><dd>停止（隔離）</dd></div>
-      <div><dt>実音声推論</dt><dd>未検証</dd></div>
+      <div><dt>外部配信接続</dt><dd>{{ '専用設定と登録済み対象を確認' if app_mode == 'normal' else '隔離・明示許可制' }}</dd></div>
+      <div><dt>音声推論</dt><dd><a href="/speech">ジョブ別の状態</a></dd></div>
       <div><dt>待ち受け</dt><dd>127.0.0.1:{{ port }}</dd></div>
       <div><dt>診断時点</dt><dd>{{ time_value(diagnosis.as_of, preferences.display_timezone) }}</dd></div>
     </dl>
@@ -16,13 +16,35 @@
   <section class="panel" id="storage">
     <div class="section-head"><h2>保存先</h2></div>
     <dl class="metrics">
-      <div><dt>使用領域</dt><dd>隔離用Linux領域</dd></div>
+      <div><dt>保存先</dt><dd>{{ recording_root }}</dd></div>
       <div><dt>空き容量</dt><dd>{{ capacity_free | size }}</dd></div>
       <div><dt>ボリューム総容量</dt><dd>{{ capacity_total | size }}</dd></div>
-      <div><dt>Windows側の保存先</dt><dd>未確認</dd></div>
+      <div><dt>管理対象の保存容量</dt><dd>{{ capacity.recorded_bytes | size }}</dd></div>
+      <div><dt>管理対象の録画</dt><dd>{{ capacity.recording_files }}本</dd></div>
     </dl>
   </section>
 </div>
+<section class="panel separated">
+  <div class="section-head"><h2>管理ファイルの照合</h2></div>
+  {% set labels = {'queued': '待機', 'running': '照合中', 'completed': '完了', 'partial': '一部照合', 'failed': '失敗', 'cancelled': '取消済み', 'interrupted': '中断'} %}
+  <dl class="metrics">
+    <div><dt>直近の実行</dt><dd>{{ labels.get(audit.latest.state, '未実施') if audit.latest else '未実施' }}</dd></div>
+    {% if audit.last_completed %}<div><dt>前回完了</dt><dd>{{ time_value(audit.last_completed.finished_at, preferences.display_timezone) }}</dd></div>{% endif %}
+    {% if audit.latest %}<div><dt>照合対象</dt><dd>{{ audit.latest.checked }}件</dd></div>{% endif %}
+  </dl>
+  {% if audit.current %}
+  <form data-api="/api/v1/system/storage-audits/{{ audit.current.id }}/cancel" data-method="POST" data-success="照合の取消を受け付けました。" action="#" method="dialog">
+    <p class="form-message" role="status" hidden></p>
+    <button class="button secondary" type="submit">照合を取り消す</button>
+  </form>
+  <a href="/system#storage">最新の状態を表示</a>
+  {% else %}
+  <form data-api="/api/v1/system/storage-audits" data-method="POST" data-success="照合を待機列に追加しました。" action="#" method="dialog">
+    <p class="form-message" role="status" hidden></p>
+    <button class="button secondary" type="submit">照合を開始</button>
+  </form>
+  {% endif %}
+</section>
 <section class="panel separated">
   <div class="section-head"><h2>メディアツール</h2></div>
   <dl class="metrics">

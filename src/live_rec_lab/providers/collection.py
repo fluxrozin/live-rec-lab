@@ -4,10 +4,11 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from ..budget import LivePermission
 from ..db import connect
-from ..isolation import FixtureWorkspace
+from ..isolation import Workspace
 from . import LiveObservation, LiveState
 from .comment_pages import CommentBatch
 from .monitor import ProbeClient
@@ -61,7 +62,7 @@ def _session(database: sqlite3.Connection, session_id: int, observation: LiveObs
 
 
 def sync_twitcasting_comments(
-    workspace: FixtureWorkspace,
+    workspace: Workspace,
     session_id: int,
     client: ProbeClient,
     observation: LiveObservation,
@@ -127,9 +128,13 @@ def _store(
             """,
                 (
                     session_id,
-                    item.source_id,
-                    item.posted_at.isoformat() if item.posted_at else None,
-                    observed_at,
+                    item.source_id or f"local:{uuid4().hex}",
+                    item.posted_at.astimezone(UTC).isoformat()
+                    if item.posted_at and item.posted_at.utcoffset() is not None
+                    else None,
+                    item.received_at.astimezone(UTC).isoformat()
+                    if item.received_at and item.received_at.utcoffset() is not None
+                    else observed_at,
                     None if item.anonymous else item.author_id,
                     None if item.anonymous else item.author_name,
                     item.body,

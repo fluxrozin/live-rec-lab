@@ -27,7 +27,7 @@
       </div>
       {% endfor %}
     </nav>
-    <div class="environment"><span class="environment-dot" aria-hidden="true"></span><span>開発者モード <span class="environment-data">隔離データ</span></span></div>
+    <div class="environment"><span class="environment-dot" aria-hidden="true"></span>{% if app_mode == 'normal' %}<span>通常運用</span>{% else %}<span>開発者モード <span class="environment-data">隔離データ</span></span>{% endif %}</div>
   </aside>
   <main id="main" tabindex="-1">
     {% block breadcrumb %}{% endblock %}

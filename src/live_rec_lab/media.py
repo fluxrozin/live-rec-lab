@@ -21,15 +21,22 @@ def _safe_component(value: str) -> str:
     return cleaned
 
 
-def automatic_stem(platform: str, streamer: str, started: datetime, title: str, number: int) -> str:
-    if platform not in {"tiktok", "twitcasting"} or number < 1:
+def automatic_stem(
+    platform: str, streamer: str, started: datetime, title: str, number: int, *, collision_id: str | None = None
+) -> str:
+    if (
+        platform not in {"tiktok", "twitcasting"}
+        or number < 1
+        or collision_id is not None
+        and re.fullmatch(r"[0-9a-f]{10}", collision_id) is None
+    ):
         raise ValueError("invalid recording name metadata")
     safe_streamer = _safe_component(streamer)
     if not safe_streamer:
         raise ValueError("streamer ID cannot produce an empty filename")
     safe_title = _safe_component(title) or "untitled"
     prefix = f"{platform}_{safe_streamer}_{started:%Y%m%d_%H%M%S}_"
-    suffix = f"_s{number:03}"
+    suffix = (f"_{collision_id}" if collision_id is not None else "") + f"_s{number:03}"
     budget = 240 - len((prefix + suffix + "_comment.srt").encode())
     if budget < len("untitled"):
         raise ValueError("streamer ID exceeds the recording name budget")
@@ -118,8 +125,20 @@ def record_fixture_video(destination: Path) -> tuple[int, str]:
     with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".fixture-hls-") as hls:
         playlist = Path(hls) / "fixture.m3u8"
         _make_fixture_hls(playlist)
-        with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".part.mp4", delete=False) as staging:
-            temporary = Path(staging.name)
+        temporary, duration_ms = stage_local_hls(playlist, destination, duration_limit=2)
+    try:
+        publish_exclusive(temporary, destination)
+        return duration_ms, generation(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def stage_local_hls(playlist: Path, destination: Path, *, duration_limit: int | None = None) -> tuple[Path, int]:
+    """Remux a validated local HLS input to staging in the destination's directory."""
+    with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".part.mp4", delete=False) as staging:
+        temporary = Path(staging.name)
+    duration_arguments = ["-t", str(duration_limit)] if duration_limit is not None else []
+    try:
         media_tool(
             "ffmpeg",
             [
@@ -136,8 +155,7 @@ def record_fixture_video(destination: Path) -> tuple[int, str]:
                 "0:v:0",
                 "-map",
                 "0:a:0?",
-                "-t",
-                "2",
+                *duration_arguments,
                 "-c",
                 "copy",
                 "-movflags",
@@ -145,32 +163,34 @@ def record_fixture_video(destination: Path) -> tuple[int, str]:
                 str(temporary),
             ],
         )
-    metadata = json.loads(
-        media_tool(
-            "ffprobe",
-            [
-                "-v",
-                "error",
-                "-protocol_whitelist",
-                "file",
-                "-show_entries",
-                "format=duration:stream=codec_type",
-                "-of",
-                "json",
-                str(temporary),
-            ],
+        metadata = json.loads(
+            media_tool(
+                "ffprobe",
+                [
+                    "-v",
+                    "error",
+                    "-protocol_whitelist",
+                    "file",
+                    "-show_entries",
+                    "format=duration:stream=codec_type",
+                    "-of",
+                    "json",
+                    str(temporary),
+                ],
+            )
         )
-    )
-    duration_ms = round(float(metadata["format"]["duration"]) * 1000)
-    if duration_ms <= 0 or not any(stream["codec_type"] == "video" for stream in metadata["streams"]):
-        raise ValueError("recording contains no valid video")
-    with temporary.open("rb") as media:
-        os.fsync(media.fileno())
-    publish_exclusive(temporary, destination)
-    return duration_ms, generation(destination)
+        duration_ms = round(float(metadata["format"]["duration"]) * 1000)
+        if duration_ms <= 0 or not any(stream["codec_type"] == "video" for stream in metadata["streams"]):
+            raise ValueError("recording contains no valid video")
+        with temporary.open("rb") as media:
+            os.fsync(media.fileno())
+        return temporary, duration_ms
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        temporary.unlink(missing_ok=True)
+        raise
 
 
-def fixture_dimensions(video: Path) -> tuple[int, int]:
+def fixture_dimensions(video: Path, *, timeout: float = 30) -> tuple[int, int]:
     metadata = json.loads(
         media_tool(
             "ffprobe",
@@ -182,15 +202,23 @@ def fixture_dimensions(video: Path) -> tuple[int, int]:
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "stream=width,height",
+                "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
                 "-of",
                 "json",
                 str(video),
             ],
+            timeout=timeout,
         )
     )
     try:
         stream = metadata["streams"][0]
-        return int(stream["width"]), int(stream["height"])
+        width, height = int(stream["width"]), int(stream["height"])
+        if min(width, height) <= 0:
+            raise ValueError("video dimensions could not be verified")
+        rotation = next(
+            (entry["rotation"] for entry in stream.get("side_data_list", []) if "rotation" in entry),
+            stream.get("tags", {}).get("rotate", 0),
+        )
+        return (height, width) if abs(float(rotation)) % 180 == 90 else (width, height)
     except (KeyError, IndexError, TypeError) as error:
         raise ValueError("video dimensions could not be verified") from error

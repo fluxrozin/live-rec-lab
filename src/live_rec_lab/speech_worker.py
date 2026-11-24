@@ -5,18 +5,26 @@ import os
 import signal
 import subprocess
 import sys
+import sysconfig
 import tempfile
+import time
 from dataclasses import asdict
+from importlib.machinery import PathFinder
 from pathlib import Path
+from threading import Event
 from typing import Literal, cast
 
-from .isolation import FixtureWorkspace, check_fixture_directory
+from .isolation import Workspace
 from .media import generation, media_tool
 from .speech import SpeechBlocked, SpeechCue, recognize_local
 
 
 class AudioUnavailable(ValueError):
     """A verified video has no audio stream."""
+
+
+class SpeechInterrupted(Exception):
+    """The manager stopped the owned inference process."""
 
 
 class SpeechUnavailable(SpeechBlocked):
@@ -27,12 +35,12 @@ class SpeechUnavailable(SpeechBlocked):
         self.reason = reason
 
 
-def _model(workspace: FixtureWorkspace, model_name: str) -> Path:
+def _model(workspace: Workspace, model_name: str) -> Path:
     models = workspace.database.parent / "models"
     candidate = models / model_name
     try:
-        check_fixture_directory(models, private=True)
-        check_fixture_directory(candidate, private=True)
+        workspace.check_directory(models, private=True)
+        workspace.check_directory(candidate, private=True)
         for required in ("model.bin", "config.json", "tokenizer.json"):
             generation(candidate / required)
         for entry in candidate.iterdir():
@@ -71,15 +79,33 @@ def _child_result(result_file: Path) -> list[SpeechCue]:
     return cues
 
 
+def _cuda_library_dirs() -> str:
+    # Search this interpreter's installed wheel locations without importing NVIDIA modules.
+    installed = list(dict.fromkeys(sysconfig.get_path(key) for key in ("purelib", "platlib")))
+    namespace = PathFinder.find_spec("nvidia", installed)
+    parent_paths = namespace.submodule_search_locations if namespace else None
+    if parent_paths is None:
+        return ""
+    return os.pathsep.join(
+        str(directory)
+        for package in ("cublas", "cudnn")
+        for location in parent_paths
+        if (directory := Path(location) / package / "lib").is_dir()
+    )
+
+
 def run_local_worker(
-    workspace: FixtureWorkspace,
+    workspace: Workspace,
     video: Path,
     *,
     model_name: str,
     language: str,
     device: str,
     worker_lock: int,
+    stop: Event | None = None,
 ) -> list[SpeechCue]:
+    if stop is not None and stop.is_set():
+        raise SpeechInterrupted
     try:
         model = str(_model(workspace, model_name))
     except SpeechUnavailable:
@@ -93,6 +119,8 @@ def run_local_worker(
             "HF_HOME": scratch,
             "XDG_CACHE_HOME": scratch,
         }
+        if device == "cuda" and (paths := _cuda_library_dirs()):
+            env["LD_LIBRARY_PATH"] = paths
         with subprocess.Popen(
             [
                 sys.executable,
@@ -114,7 +142,7 @@ def run_local_worker(
             pass_fds=(worker_lock,),
         ) as child:
             try:
-                if child.wait(timeout=1800):
+                if _wait_child(child, stop, timeout=1800):
                     raise ValueError("speech child failed")
             except BaseException:
                 if child.poll() is None:
@@ -125,6 +153,21 @@ def run_local_worker(
                     child.wait()
                 raise
         return _child_result(Path(scratch) / "result.json")
+
+
+def _wait_child(child: subprocess.Popen, stop: Event | None, *, timeout: float) -> int:
+    if stop is None:
+        return child.wait(timeout=timeout)
+    deadline = time.monotonic() + timeout
+    while not stop.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(child.args, timeout)
+        try:
+            return child.wait(timeout=min(remaining, 0.2))
+        except subprocess.TimeoutExpired:
+            continue
+    raise SpeechInterrupted
 
 
 def has_audio(video: Path) -> bool:

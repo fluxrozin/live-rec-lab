@@ -1,6 +1,6 @@
 # LiveRecorder — 統合マニュアル
 
-> 現在は隔離fixtureと採用Aの主要8画面を利用できます。通常運用のCLIや機能別設定のうち未実装の項目は、以下の予定仕様を参照してください。
+> 採用Aの主要8画面、通常と開発者モードの起動・停止、隔離の録画・コメント・字幕・削除を利用できます。実配信・通常Windows媒体・実機の機能別状況は[初期Featureの追跡表](../specs/001-initial-live-recorder/traceability.md)を参照してください。
 
 ## 隔離fixtureの実行
 
@@ -16,9 +16,9 @@
 
 1. WindowsのPowerShellで `wsl -l -v` を実行し、UbuntuがWSLバージョン2で起動することを確認します。Ubuntu 24.04 LTSを基準とします。
 2. リポジトリをWSLのホーム配下に置き、作業ディレクトリをリポジトリのルートへ移します。一般ユーザーでPython 3.12、uv、FFmpegを準備します。実際の実行環境で `ffmpeg -version` と `ffprobe -version` を確認します。
-3. 全機能利用には `uv sync --locked --extra speech` を実行します。コアだけの開発・診断は `uv sync --locked` で可能（実行時も `--extra speech` を省略）。音声未導入は理由付き保留となり、録画・コメント・Webは継続します。資格情報を使う場合は `.env.example` を `.env` にコピーし、権限を `chmod 600 .env` に設定してから値を記入します。
+3. CPU音声認識は `uv sync --locked --extra speech`、CUDA音声認識は `uv sync --locked --extra speech-cuda` で依存を揃えます。`uv run` にも同じextraを指定します。資格情報を使う場合は `.env.example` を `.env` にコピーし、`chmod 600 .env` で保護してから値を記入します。
 4. 録画する場合は専用のWindowsドライブを選びます。他の録画アプリケーションや別インスタンスの**現在の実効録画ルート**をそれぞれの設定から確認し、`LIVE_REC_LAB_EXISTING_RECORDING_ROOTS` に設定します。DBやログのディレクトリも別々にします。変数や設定の詳細は [設定](#configuration) を参照してください。
-5. 初回は既存アプリ・保護パス・実効保存先・ポートを確認し、WSL内で起動します。通常起動時にSQLiteのマイグレーションと未完了処理の照合を行います。診断では自動移行・初期化を行いません。
+5. 初回は既存アプリ・保護パス・実効保存先・ポートを確認し、WSL内で起動します。専用管理領域を確認し、未作成の場合は初期化します。
 
    ```bash
    uv run --locked --extra speech live-rec-lab start
@@ -32,9 +32,9 @@ Windowsから接続できない場合は [障害対応](#troubleshooting) を参
 
 <a id="developer-mode"></a>
 
-### 開発者モードと共通診断（実装予定）
+### 開発者モードと共通診断
 
-実行モードは通常運用と開発者の2種類です。診断は別モードではなく、通常起動でも利用できます。下記は要求§13.7、§14.6、§15.2.1に基づく予定CLIです。
+通常運用と開発者モードのいずれも、対象を指定して読み取り診断を利用できます。
 
 ```bash
 # 通常運用（既定）
@@ -48,13 +48,15 @@ uv run --locked --extra speech live-rec-lab diagnose --dev --json
 uv run --locked --extra speech live-rec-lab stop --dev
 ```
 
-開発者モードは隔離されたDB・設定・ログ・runtime・保存先・固定ポートを使い、既定で外部配信／署名通信を停止します。実際のURLとデータ領域は起動出力で確認します。開発者モードのURLでのみ `/docs`、`/redoc`、`/openapi.json` を参照できます。Web管理画面には実効モードとデータ環境が表示され、Webから切り替えることはできません。実装後は採用した非ブラウザ操作方式について、curl／Python等による安全な読取・変更要求と拒否時の動作を実測し、ここに手順を記載します。
+開発者モードは隔離されたDB・設定・ログ・runtime・保存先・固定ポートを使い、外部配信への接続は既定で停止します。URLは起動出力または `url --dev` で確認します。開発者モードの `/docs`、`/redoc`、`/openapi.json` はローカル資産を使います。`/api/v1/developer/diagnose` で隔離診断を取得できます。
+
+非ブラウザから読み取る例は `curl --fail --noproxy '*' http://127.0.0.1:8083/api/v1/health` です。変更リクエストでは同じポートの `/` または `/docs` のHTMLからCSRFトークンを取得し、同一オリジンの `Origin` と `X-CSRF-Token` を送ります。トークンは起動単位で発行されます。
 
 隔離の既定データ・状態は `~/.local/share/live-rec-lab-dev/data`、`~/.local/state/live-rec-lab-dev`、録画は `~/.local/share/live-rec-lab-dev/recordings`、ポートは8083です。隔離では `DEV_`付き環境変数または `.env.dev` の専用キー（例：`DEV_LIVE_REC_LAB_RECORDING_ROOT`）のみを解決し、通常の `.env`・環境資格情報は継承しません。設定や停止中CLI、初期化、バックアップ等でも隔離境界を越える操作は拒否されます。
 
-隔離で実接続する必要がある場合だけ、許可済み対象・専用資格情報を確認して `start --dev --allow-live` を明示します。通常運用が実通信排他を保持している場合は接続を拒否します。残枠不明時も接続しません。 通常運用は登録・有効化済みの対象を許可範囲内で自動処理します。開発の実接続許可は対象・目的・期間または終了条件・予算範囲をまとめて指定でき、許可内の再試行に都度承認は不要です（要求§15.2.1）。
+実接続の準備では、リポジトリ直下の `.env.dev` を `chmod 600` にし、ツイキャス公式APIの資格情報を `DEV_TWITCASTING_CLIENT_ID` と `DEV_TWITCASTING_CLIENT_SECRET` に設定します。署名API用のキーは `DEV_SIGN_API_KEY` です。隔離の試験起動は `start --dev --allow-live --target SERVICE:ACCOUNT --until ISO-8601` を使います。期限にはタイムゾーンを含め、試験対象をあらかじめ登録・有効化してください。採用経路の実配信検証とTikTokの署名処理は残件です。
 
-保護パス設定と外部通信排他・永続予算は `~/.local/state/live-rec-lab-shared/` の所有者限定領域に保持し、worktree別DBから独立させます。既存アプリ・現行ルート・保護が必要な旧ルートを設定し、起動／設定変更時に衝突を検査します。確認不能・設定破損時は該当操作を拒否します。通常運用の媒体保存先だけの異常は録画等を保留し、安全な監視・コメント収集・Webを継続します。外部予算はDB復元や再起動でリセットしません（要求§15.2.1）。
+保護パス設定と外部通信排他・永続予算は `~/.local/state/live-rec-lab-shared/` の所有者限定領域に保持します。`protected-paths.json` の `external_paths` に、既存アプリの保護対象を記録します。外部枠の既存利用が確認済みの場合に限り、同ファイルの `external_use_confirmed` を `true` にします。自動登録された `instances` と既存の予算DBは保持してください。
 
 実運用データ固有の問題は通常の `diagnose --json` で調査し、不足する場合は一貫したバックアップを取得します。
 
@@ -67,7 +69,7 @@ uv run --locked --extra speech live-rec-lab backup "$HOME/live-rec-lab-debug-$(d
 
 `diagnose --json` はstdoutに単一JSONを返し、説明ログはstderrに出ます。`schema_version`、対象インスタンス・モード・データ環境・稼働コード識別子・取得時刻・components・warnings/errorsを確認してください。終了コード0は取得成功、1は部分取得、2は取得不能、3は対象不一致です（要求§14.6）。ソース修正後は稼働版との一致を確認し、未確認・不一致なら正しい対象を再起動して検証し直します。
 
-### 複数worktreeの隔離開発（実装後の設定例）
+### 複数worktreeの隔離開発
 
 各worktreeのリポジトリルートに専用 `.env.dev` を配置します（Git管理外）。例として worktree A は以下の値を使用します。`/home/USER` は実際のLinuxホーム絶対パスに置換してください。
 
@@ -96,7 +98,7 @@ uv run --locked --extra speech live-rec-lab backup "$HOME/live-rec-lab-backup-$(
 
 CLIはSQLite Online Backupを使い、一貫したスナップショットを新規ファイルに保存します。既存の宛先を指定した場合は別名を選んでください。旧スナップショットには保存期限前のコメント本文や投稿者情報が含まれます。保管場所を記録し、不要になったバックアップを安全に破棄するか期限処理後の新しいバックアップに差し替えてください。
 
-手動復元は以下の停止中保守手順（要求§15.2.1）に従います。実装後に採用した具体的なコマンドを記載し、安全確認ができない状態では実運用DBを交換しません。
+引数なしの `backup` は対象モードの状態ディレクトリの `backups/` に保存します。停止中の `restore-prepare SNAPSHOT` で候補ファイル名を指定します。差し替え後の照合には `restore-finish` を使います。開発者モードを対象にするときは各コマンドに `--dev` を付けます。実運用DBでの復元実測は保留しており、以下の要件は隔離DBで確認しています。
 
 1. 利用者が対象と目的を確認し通常インスタンスを安全停止。保守経路で同じ排他を取得し、停止・子プロセス・実効パスを確認します。
 2. 現行DBを新規バックアップし、復元候補の `PRAGMA integrity_check`、スキーマ・管理ルートを確認。DB外に復元未完了マーカーを作ります。
@@ -110,13 +112,13 @@ CLIはSQLite Online Backupを使い、一貫したスナップショットを新
 
 ### Windowsサインイン後の起動
 
-PowerShellでリポジトリの `scripts/start_windows.ps1` を起動し、最初にプレビューを確認します。WSLディストリビューション名、WSL内のリポジトリパス、uvへのパスは実環境に合わせます。
+PowerShellで `scripts/register-startup.ps1` を実行します。WSLディストリビューション名と、リポジトリ・uvの絶対パスは実環境に合わせます。以下の `-WhatIf` は登録内容の確認用です。
 
 ```powershell
-.\scripts\start_windows.ps1 -Distro Ubuntu-24.04 -Repo '~/projects/live-rec-lab' -Uv '~/.local/bin/uv' -InstanceName personal
+.\scripts\register-startup.ps1 -Distribution Ubuntu-24.04 -Repository '/home/USER/projects/live-rec-lab' -Uv '/home/USER/.local/bin/uv' -WhatIf
 ```
 
-同じ引数に `-Register` を付けるとサインイン時の起動タスク `LiveRecorder-Lab-personal` を登録します。同名のタスクがある場合は停止します。WSLのユーザーsystemdで管理する場合は `scripts/live-rec-lab.service` が設定例です。Windowsサインイン時にWSLを起動する構成と合わせて使用してください。
+`-WhatIf` を外すと、現在のWindowsユーザーのサインイン時に通常モードを起動するタスクを登録します。既存の同名タスクは保護されます。構文はWindows PowerShellで確認済みです。実際の登録・再サインイン時の起動は利用開始前の確認対象です。
 
 更新時は手動バックアップと安全停止の後にソースを更新し、リポジトリで `uv sync --locked --extra speech` を実行します。その後に `start` を実行し、移行結果と使用中のURLを確認してください。
 

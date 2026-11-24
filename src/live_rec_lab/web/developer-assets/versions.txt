@@ -1,0 +1,8 @@
+swagger-ui-dist 5.34.1 (Apache-2.0)
+https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.34.1.tgz
+The unchanged upstream browser bundle and CSS are distributed with swagger-license.txt and swagger-notice.txt.
+
+redoc 2.5.3 (MIT)
+https://registry.npmjs.org/redoc/-/redoc-2.5.3.tgz
+The standalone bundle includes one local change: textual ReDoc attribution replaces the remote logo fetch.
+The upstream license is distributed as redoc-license.txt.

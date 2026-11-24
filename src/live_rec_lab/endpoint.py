@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from .isolation import FixtureWorkspace, check_fixture_directory
+from .isolation import Workspace
 from .web_port import read_web_port, validate_web_port
 
 _BOOT = Path("/proc/sys/kernel/random/boot_id")
@@ -24,6 +24,16 @@ _IDENTIFIER = re.compile(r"[0-9a-f]{32}\Z")
 
 class EndpointUnconfirmed(ValueError):
     """Runtime information cannot be safely tied to the current app process."""
+
+
+def code_revision() -> str:
+    package = Path(__file__).parent
+    digest = hashlib.sha256()
+    for path in sorted(package.rglob("*")):
+        if path.is_file() and path.suffix in {".py", ".html", ".css", ".js"}:
+            digest.update(os.fsencode(path.relative_to(package)) + b"\0")
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def _start_ticks(pid: int) -> int:
@@ -46,9 +56,11 @@ class Endpoint:
     instance_id: str
     boot_id: str
     start_ticks: int
+    mode: str = "fixture"
+    code_revision: str | None = None
 
     @classmethod
-    def current(cls, port: int) -> "Endpoint":
+    def current(cls, port: int, mode: str) -> "Endpoint":
         pid = os.getpid()
         return cls(
             pid,
@@ -57,10 +69,12 @@ class Endpoint:
             uuid4().hex,
             _BOOT.read_text().strip(),
             _start_ticks(pid),
+            mode,
+            code_revision(),
         )
 
-    def address(self, workspace: FixtureWorkspace) -> str:
-        scope = hashlib.sha256(os.fsencode(workspace.root)).hexdigest()[:32]
+    def address(self, workspace: Workspace) -> str:
+        scope = hashlib.sha256(os.fsencode(workspace.runtime_path)).hexdigest()[:32]
         return f"\0live-rec-lab-{scope}-{self.instance_id}"
 
     @property
@@ -68,17 +82,17 @@ class Endpoint:
         return f"http://127.0.0.1:{self.port}/"
 
     def document(self) -> dict[str, object]:
-        return {**asdict(self), "url": self.url, "mode": "fixture"}
+        return {**asdict(self), "url": self.url}
 
 
-def endpoint_path(workspace: FixtureWorkspace) -> Path:
-    return workspace.events.parent / "runtime" / "endpoint.json"
+def endpoint_path(workspace: Workspace) -> Path:
+    return workspace.runtime_path / "endpoint.json"
 
 
-def _read_document(workspace: FixtureWorkspace) -> Endpoint | None:
+def _read_document(workspace: Workspace) -> Endpoint | None:
     path = endpoint_path(workspace)
     try:
-        check_fixture_directory(path.parent, private=True)
+        workspace.check_directory(path.parent, private=True)
         file = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
@@ -97,7 +111,7 @@ def _read_document(workspace: FixtureWorkspace) -> Endpoint | None:
                 raise ValueError("unsafe endpoint file")
             raw = stream.read(4097)
         data = json.loads(raw)
-        if not isinstance(data, dict) or data.get("mode") != "fixture":
+        if not isinstance(data, dict) or data.get("mode") != workspace.mode:
             raise ValueError("unexpected endpoint mode")
         endpoint = Endpoint(
             data["pid"],
@@ -106,6 +120,8 @@ def _read_document(workspace: FixtureWorkspace) -> Endpoint | None:
             data["instance_id"],
             data["boot_id"],
             data["start_ticks"],
+            workspace.mode,
+            data.get("code_revision"),
         )
         if (
             type(endpoint.pid) is not int
@@ -122,11 +138,11 @@ def _read_document(workspace: FixtureWorkspace) -> Endpoint | None:
         raise EndpointUnconfirmed("runtime endpoint identity is unconfirmed") from error
 
 
-def assert_endpoint_replaceable(workspace: FixtureWorkspace) -> None:
+def assert_endpoint_replaceable(workspace: Workspace) -> None:
     # A regular file left by the previously owned instance can be replaced under the server lock.
     path = endpoint_path(workspace)
     try:
-        check_fixture_directory(path.parent, private=True)
+        workspace.check_directory(path.parent, private=True)
         previous = path.lstat()
     except FileNotFoundError:
         return
@@ -139,11 +155,11 @@ def assert_endpoint_replaceable(workspace: FixtureWorkspace) -> None:
         raise EndpointUnconfirmed("runtime endpoint path is not owned")
 
 
-def publish_endpoint(workspace: FixtureWorkspace, endpoint: Endpoint) -> None:
+def publish_endpoint(workspace: Workspace, endpoint: Endpoint) -> None:
     assert_endpoint_replaceable(workspace)
     path = endpoint_path(workspace)
     path.parent.mkdir(mode=0o700, exist_ok=True)
-    check_fixture_directory(path.parent, private=True)
+    workspace.check_directory(path.parent, private=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
         temp = Path(stream.name)
         try:
@@ -155,7 +171,7 @@ def publish_endpoint(workspace: FixtureWorkspace, endpoint: Endpoint) -> None:
             temp.unlink(missing_ok=True)
 
 
-def remove_endpoint(workspace: FixtureWorkspace, endpoint: Endpoint) -> None:
+def remove_endpoint(workspace: Workspace, endpoint: Endpoint) -> None:
     try:
         current = _read_document(workspace)
         if current == endpoint:
@@ -168,7 +184,7 @@ def peer_credentials(channel: socket.socket) -> tuple[int, int, int]:
     return _CREDENTIALS.unpack(channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, _CREDENTIALS.size))
 
 
-def _request(workspace: FixtureWorkspace, endpoint: Endpoint, command: str) -> None:
+def _request(workspace: Workspace, endpoint: Endpoint, command: str) -> None:
     try:
         if _BOOT.read_text().strip() != endpoint.boot_id or _start_ticks(endpoint.pid) != endpoint.start_ticks:
             raise EndpointUnconfirmed("runtime process identity changed")
@@ -186,12 +202,14 @@ def _request(workspace: FixtureWorkspace, endpoint: Endpoint, command: str) -> N
         raise EndpointUnconfirmed("running fixture server could not be verified") from error
 
 
-def fixture_status(workspace: FixtureWorkspace) -> dict[str, object]:
-    workspace = FixtureWorkspace.open(workspace.root)
+def fixture_status(workspace: Workspace, *, settings: bool = True) -> dict[str, object]:
+    workspace = workspace.recheck()
     if workspace.restore_pending:
-        return {"mode": "fixture", "state": "restore_in_progress"}
-    saved = read_web_port(workspace)
-    baseline = {"mode": "fixture", "configured_port": saved.web_port, "port_revision": saved.revision}
+        return {"mode": workspace.mode, "state": "restore_in_progress"}
+    saved = read_web_port(workspace) if settings else None
+    baseline: dict[str, object] = {"mode": workspace.mode}
+    if saved is not None:
+        baseline.update(configured_port=saved.web_port, port_revision=saved.revision)
     try:
         endpoint = _read_document(workspace)
         if endpoint is None:
@@ -203,21 +221,21 @@ def fixture_status(workspace: FixtureWorkspace) -> dict[str, object]:
         **endpoint.document(),
         **baseline,
         "state": "running",
-        "restart_required": saved.web_port != endpoint.port,
+        "restart_required": saved.web_port != endpoint.port if saved is not None else None,
     }
 
 
-def stop_fixture(workspace: FixtureWorkspace, *, timeout: float = 30) -> dict[str, object]:
-    workspace = FixtureWorkspace.open(workspace.root)
+def stop_fixture(workspace: Workspace, *, timeout: float = 30) -> dict[str, object]:
+    workspace = workspace.recheck()
     workspace.require_ready()
     endpoint = _read_document(workspace)
     if endpoint is None:
-        return {"mode": "fixture", "state": "stopped"}
+        return {"mode": workspace.mode, "state": "stopped"}
     _request(workspace, endpoint, "stop")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         current = _read_document(workspace)
         if current is None or current.instance_id != endpoint.instance_id:
-            return {"mode": "fixture", "state": "stopped", "instance_id": endpoint.instance_id}
+            return {"mode": workspace.mode, "state": "stopped", "instance_id": endpoint.instance_id}
         time.sleep(0.05)
     raise EndpointUnconfirmed("fixture server has not confirmed shutdown")

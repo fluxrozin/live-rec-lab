@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from .db import connect
-from .isolation import FixtureWorkspace
+from .isolation import Workspace
 
 FIXTURE_PORT = 8083
 
@@ -28,30 +28,30 @@ def validate_web_port(value: int) -> int:
     return value
 
 
-def read_web_port(workspace: FixtureWorkspace) -> WebPort:
-    workspace = FixtureWorkspace.open(workspace.root)
+def read_web_port(workspace: Workspace) -> WebPort:
+    workspace = workspace.recheck()
     workspace.require_ready()
     with closing(sqlite3.connect(workspace.database.as_uri() + "?mode=ro", uri=True)) as database:
-        return _from_database(database)
+        return _from_database(database, workspace.default_port)
 
 
-def _from_database(database: sqlite3.Connection) -> WebPort:
+def _from_database(database: sqlite3.Connection, default: int) -> WebPort:
     if not database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'system_settings'").fetchone():
-        return WebPort()
+        return WebPort(default)
     row = database.execute("SELECT value, revision FROM system_settings WHERE key = 'web_port'").fetchone()
     if row is None:
-        return WebPort()
+        return WebPort(default)
     port, revision = row
     if type(revision) is not int or revision < 1:
         raise ValueError("invalid web_port settings revision")
     return WebPort(validate_web_port(json.loads(port)), revision)
 
 
-def save_web_port(workspace: FixtureWorkspace, port: int, *, revision: int | None = None) -> WebPort:
+def save_web_port(workspace: Workspace, port: int, *, revision: int | None = None) -> WebPort:
     port = validate_web_port(port)
     with workspace.exclusive(), closing(connect(workspace.database)) as database, database:
         database.execute("BEGIN IMMEDIATE")
-        current = _from_database(database)
+        current = _from_database(database, workspace.default_port)
         if revision is not None and current.revision != revision:
             raise PortRevisionConflict("web_port settings have changed")
         database.execute("""

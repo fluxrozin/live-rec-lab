@@ -6,7 +6,7 @@ LiveRecorder は、Windows 11 上の WSL2 で動かす個人用のライブ配�
 
 ## 現在の開発状態
 
-初期Featureの隔離版で、両サービスの架空配信をローカルHLSから録画し、SQLiteへのコメント保存とコメントSRT生成を確認しました。架空の発話から音声SRT・統合ASSを出力し、採用Aの主要8画面で結果を確認できます。実配信の自動監視・取得、実音声認識、通常運用は今後の対象です。
+両サービスの模擬配信をローカルHLSで録画し、SQLiteへのコメント保存と3種の字幕生成を確認しました。採用Aの主要8画面から字幕の予約、ストレージ照合、隔離媒体の削除を操作できます。通常・開発者モードの起動と停止は一時データで検証済みです。`large-v3` のCPUとCUDA推論も合成音声で確認しました。実配信の録画・署名通信と通常Windows媒体の削除は利用保留です。
 
 WSL2のリポジトリルートで、Python 3.12、uv、システムのFFmpeg／ffprobeを用意します。次のコマンドは専用の一時領域に架空データを保存します。
 
@@ -24,9 +24,9 @@ uv run --locked live-rec-lab fixture serve "$fixture_root"
 
 ## 開発の再開
 
-[初期Featureのタスクと再開点](specs/001-initial-live-recorder/tasks.md) と [開始プロンプト](prompts/start.md) を参照してください。Spec Kit 1.4.4 のCodex統合を導入済みです。開発原則の正本は [AGENTS.md](AGENTS.md)、製品・UI・技術の正本は [要求](docs/requirements.md)、[UI仕様](docs/ui-spec.md)、[技術設計](docs/system-design.md) です。以下の通常運用手順は実装予定です。
+[初期Featureのタスクと再開点](specs/001-initial-live-recorder/tasks.md) と [開始プロンプト](prompts/start.md) を参照してください。Spec Kit 1.4.4 のCodex統合を導入済みです。開発原則の正本は [AGENTS.md](AGENTS.md)、製品・UI・技術の正本は [要求](docs/requirements.md)、[UI仕様](docs/ui-spec.md)、[技術設計](docs/system-design.md) です。
 
-## 起動して画面を開く（実装・依存ロック生成後）
+## 起動して画面を開く
 
 Windows 11＋WSL2 Ubuntu 24.04で、Python 3.12、uv、FFmpegを用意し、リポジトリのルートで起動します。
 
@@ -34,6 +34,8 @@ Windows 11＋WSL2 Ubuntu 24.04で、Python 3.12、uv、FFmpegを用意し、リ�
 uv sync --locked --extra speech
 uv run --locked --extra speech live-rec-lab start
 ```
+
+CUDAを使う場合は `speech` の代わりに `speech-cuda` を指定します。外部監視や新規ジョブを停止して起動を確認する場合は `LIVE_REC_LAB_DISABLE_SCHEDULER=1` を付けます。
 
 コンソールに出る `http://127.0.0.1:<port>` をブラウザで開きます。同じ環境で次を使います。
 
@@ -48,9 +50,9 @@ URLは `~/.local/state/live-rec-lab/runtime/endpoint.json` にも残ります。
 
 画面ロック中とディスプレイOFF中の継続、スリープと休止、Windowsへサインインしたあとの自動起動は想定動作です。実機で確認できた範囲は [制限と検証範囲](manual/README.md#limitations) を参照してください。
 
-## 開発者モード（実装後）
+## 開発者モード
 
-通常起動は従来どおり `start`。開発者モードは明示的に起動します。以下はスターターが定義する実装予定のCLIです。
+通常と別のDB・状態ディレクトリ・固定ポートで開発者モードを起動します。
 
 ```bash
 uv run --locked --extra speech live-rec-lab start --dev
@@ -63,7 +65,7 @@ uv run --locked --extra speech live-rec-lab diagnose --json
 
 開発者モードは隔離データ・専用設定・固定ポートを使用し、外部通信は既定停止です。通常起動には開発用ルートがありません。実運用の調査は読み取り専用診断とSQLiteバックアップの隔離コピーを使用し、実運用DBを直接開発起動しません。保護パス・排他・worktree分離・手動復元は [統合マニュアル](manual/README.md#developer-mode) を参照してください。
 
-## 開発時の自動テスト（実装後）
+## 開発時の自動テスト
 
 ```bash
 uv run --locked --extra speech pytest -n auto -m "not serial and not live and not hardware"

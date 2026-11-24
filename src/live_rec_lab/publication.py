@@ -4,19 +4,28 @@ import json
 import os
 import sqlite3
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
-from .isolation import FixtureWorkspace
+from .isolation import Workspace
 from .media import generation, publish_exclusive
+from .retention import MediaDeletionConflict, media_deletion_status
 
 _SUFFIXES = {"comment": "_comment.srt", "speech": "_speech.srt", "ass": ".ass"}
 
 
-def matches_media(workspace: FixtureWorkspace, relative_path: str, expected: str) -> bool:
-    candidate = workspace.root / relative_path
-    if ".." in candidate.parts or not candidate.is_relative_to(workspace.recordings):
-        return False
+def _require_publishable(database: sqlite3.Connection, workspace: Workspace, session_id: int, kind: str) -> None:
+    workspace.require_media()
+    if media_deletion_status(database, session_id) is not None:
+        raise MediaDeletionConflict("subtitle target is reserved for media deletion")
+    expiry = database.execute("SELECT state FROM comment_expirations WHERE session_id = ?", (session_id,)).fetchone()
+    if expiry and (kind != "speech" or expiry[0] != "expired"):
+        raise MediaDeletionConflict("subtitle publication is blocked by comment expiration")
+
+
+def matches_media(workspace: Workspace, relative_path: str, expected: str) -> bool:
     try:
+        candidate = workspace.media_path(relative_path)
         return candidate.resolve(strict=True) == candidate and generation(candidate) == expected
     except (OSError, ValueError):
         return False
@@ -24,15 +33,16 @@ def matches_media(workspace: FixtureWorkspace, relative_path: str, expected: str
 
 def publish_initial_subtitle(
     database: sqlite3.Connection,
-    workspace: FixtureWorkspace,
+    workspace: Workspace,
     segment: sqlite3.Row,
     kind: str,
     text: str,
     version: int,
 ) -> Path:
+    _require_publishable(database, workspace, segment["session_id"], kind)
     if not matches_media(workspace, segment["video_path"], segment["video_generation"]):
         raise ValueError("video generation changed before subtitle staging")
-    video = workspace.root / segment["video_path"]
+    video = workspace.media_path(segment["video_path"])
     destination = video.with_name(video.stem + _SUFFIXES[kind])
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -48,7 +58,7 @@ def publish_initial_subtitle(
     if not matches_media(workspace, segment["video_path"], segment["video_generation"]):
         raise ValueError("video generation changed before subtitle publication")
     publish_exclusive(temporary, destination)
-    relative = destination.relative_to(workspace.root)
+    relative = workspace.media_relative(destination)
     with database:
         database.execute(
             """
@@ -132,20 +142,20 @@ def _commit_revision(database: sqlite3.Connection, op: sqlite3.Row, new_generati
         database.execute("UPDATE subtitle_revision_operations SET state = 'completed' WHERE id = ?", (op["id"],))
 
 
-def _cleanup_operation(workspace: FixtureWorkspace, op: sqlite3.Row) -> None:
+def _cleanup_operation(workspace: Workspace, op: sqlite3.Row) -> None:
     for role in ("staged", "backup"):
         path, expected = op[f"{role}_path"], op[f"{role}_generation"]
         if not path or not expected or not matches_media(workspace, path, expected):
             continue
         try:
-            (workspace.root / path).unlink()
+            workspace.media_path(path).unlink()
         except OSError as error:
             workspace.event("subtitle", "temporary_cleanup_failed", f"subtitle-revision-{op['id']}", error)
 
 
 def _reconcile(
     database: sqlite3.Connection,
-    workspace: FixtureWorkspace,
+    workspace: Workspace,
     segment_id: int,
     kind: str,
     relative: str,
@@ -160,7 +170,7 @@ def _reconcile(
         return
     if op["destination"] != relative:
         raise ValueError("pending subtitle location changed")
-    path = workspace.root / relative
+    path = workspace.media_path(relative)
     if (not op["prior_generation"] and not os.path.lexists(path) and op["new_identity"]) or (
         op["prior_generation"] and matches_media(workspace, relative, op["prior_generation"])
     ):
@@ -177,18 +187,21 @@ def _reconcile(
 
 def publish_subtitle_revision(
     database: sqlite3.Connection,
-    workspace: FixtureWorkspace,
+    workspace: Workspace,
     segment: sqlite3.Row,
     kind: str,
     text: str,
     version: int,
+    *,
+    verify_inputs: Callable[[], None] | None = None,
 ) -> None:
-    """Publish a revision under the fixture writer lock and journal the file mutation."""
+    """Publish a revision under the workspace writer lock and journal the file mutation."""
+    _require_publishable(database, workspace, segment["session_id"], kind)
     if not matches_media(workspace, segment["video_path"], segment["video_generation"]):
         raise ValueError("video generation changed before subtitle revision")
-    video = workspace.root / segment["video_path"]
+    video = workspace.media_path(segment["video_path"])
     destination = video.with_name(video.stem + _SUFFIXES[kind])
-    relative = str(destination.relative_to(workspace.root))
+    relative = str(workspace.media_relative(destination))
     database.executescript(_REVISION_SCHEMA)
     _reconcile(database, workspace, segment["id"], kind, relative)
     prior = database.execute(
@@ -223,9 +236,9 @@ def publish_subtitle_revision(
                 version,
                 prior_generation,
                 _identity(staged_generation) if staged_generation else None,
-                str(staged.relative_to(workspace.root)) if staged else None,
+                str(workspace.media_relative(staged)) if staged else None,
                 staged_generation,
-                str(backup.relative_to(workspace.root)) if backup else None,
+                str(workspace.media_relative(backup)) if backup else None,
                 generation(backup) if backup else None,
             ),
         ).fetchone()
@@ -235,6 +248,8 @@ def publish_subtitle_revision(
         raise ValueError("staged subtitle generation changed")
     if prior and not matches_media(workspace, relative, prior_generation):
         raise ValueError("prior subtitle generation changed")
+    if verify_inputs is not None:
+        verify_inputs()
     if staged and prior:
         os.replace(staged, destination)
     elif staged:

@@ -11,13 +11,13 @@ function openDialog(dialog, trigger) {
 }
 
 function resetMessage(form) {
-  const message = form.querySelector(".form-message");
+  const message = form.dataset.message ? document.getElementById(form.dataset.message) : form.querySelector(".form-message");
   message.hidden = true;
   message.classList.remove("error");
 }
 
 function showMessage(form, text) {
-  const message = form.querySelector(".form-message");
+  const message = form.dataset.message ? document.getElementById(form.dataset.message) : form.querySelector(".form-message");
   message.textContent = text;
   message.classList.add("error");
   message.hidden = false;
@@ -65,12 +65,18 @@ document.addEventListener("click", (event) => {
   }
 });
 
+const numberFields = new Set([
+  "refresh_seconds", "revision", "web_port", "tiktok_per_minute", "twitcasting_per_minute",
+  "comment_retention_days", "video_retention_days", "minimum_free_gib", "maximum_recording_gib"
+]);
+
 function formValues(form) {
   const value = {};
   for (const field of Array.from(form.elements)) {
     if (!field.name) continue;
     value[field.name] = field.type === "checkbox" ? field.checked
-      : ["refresh_seconds", "revision", "web_port"].includes(field.name) ? Number(field.value) : field.value;
+      : numberFields.has(field.name) ? Number(field.value)
+      : field.name === "recording_root" ? field.value.trim() || null : field.value;
   }
   return value;
 }
@@ -118,7 +124,8 @@ for (const form of document.querySelectorAll("form[data-method]")) {
     event.preventDefault();
     if (!form.dataset.api || !issuedCsrf || busy.has(form)) return;
     resetMessage(form);
-    const submit = form.querySelector('[type="submit"]');
+    const submit = event.submitter || Array.from(form.elements).find((field) => field.type === "submit");
+    if (!submit) return;
     busy.add(form);
     submit.disabled = true;
     try {
@@ -133,13 +140,22 @@ for (const form of document.querySelectorAll("form[data-method]")) {
         showMessage(form, result.error?.message || "操作を受け付けられませんでした。");
         return;
       }
+      const result = form.dataset.completedRedirect || form.dataset.reviewMessage ? await response.json() : null;
+      if (form.dataset.reviewMessage && result.state === "needs_review") {
+        showMessage(form, form.dataset.reviewMessage);
+        return;
+      }
       if (settingsBaselines.has(form)) settingsBaselines.set(form, JSON.stringify(formValues(form)));
       try {
         sessionStorage.setItem("live-rec-lab-flash", form.dataset.success);
       } catch {
         // The refreshed page still shows the saved values.
       }
-      window.location.reload();
+      if (form.dataset.completedRedirect && result.state === "completed" && result.mode === "files_and_history") {
+        window.location.assign(form.dataset.completedRedirect);
+      } else {
+        window.location.reload();
+      }
     } catch {
       showMessage(form, "結果を確認できませんでした。再送する前に現在の状態を確認してください。");
     } finally {

@@ -1,4 +1,8 @@
+import struct
+import sys
+import wave
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -50,3 +54,38 @@ def test_combined_ass_is_one_track_and_bounds_lanes_and_escapes():
     assert r"{\pos(0,0)}" not in result.text
     assert "🙂" not in result.text
     assert r"改行\N｛＼pos(0,0)｝ (観客 | @user)" in result.text
+
+
+def test_recognition_uses_ffmpeg_pcm_without_another_decoder(tmp_path, monkeypatch):
+    numpy = pytest.importorskip("numpy")
+    model = tmp_path / "large-v3-turbo"
+    model.mkdir()
+    for name in ("model.bin", "config.json", "tokenizer.json"):
+        (model / name).touch()
+    audio = tmp_path / "owned.wav"
+    audio_samples = struct.pack("<4h", -32768, 0, 16384, 32767)
+
+    def write_audio(frequency):
+        with wave.open(str(audio), "wb") as track:
+            track.setparams((1, 2, frequency, 0, "NONE", "not compressed"))
+            track.writeframes(audio_samples)
+
+    class StubWhisperModel:
+        def __init__(self, path, **options):
+            assert path == str(model)
+            assert options["local_files_only"] is True
+
+        def transcribe(self, samples, **options):
+            assert samples.dtype == numpy.float32
+            assert samples.tolist() == [-1.0, 0.0, 0.5, 32767 / 32768]
+            assert options["vad_filter"] is True
+            return [SimpleNamespace(start=0.1, end=0.3, text="日本語")], None
+
+    fake_whisper = ModuleType("faster_whisper")
+    fake_whisper.WhisperModel = StubWhisperModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_whisper)
+    write_audio(16000)
+    assert recognize_local(audio, model, device="cpu") == [SpeechCue(100, 300, "日本語")]
+    write_audio(44100)
+    with pytest.raises(ValueError, match="16 kHz mono"):
+        recognize_local(audio, model, device="cpu")

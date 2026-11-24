@@ -8,7 +8,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.exceptions import HTTPException
 
-from ..isolation import FixtureWorkspace
+from ..ass_jobs import enqueue_ass, public_ass_attempt
+from ..isolation import Workspace
 from ..speech_jobs import (
     SpeechConfiguration,
     SpeechSettingsConflict,
@@ -38,7 +39,7 @@ class RetryRequest(BaseModel):
     confirmed: StrictBool
 
 
-def mount_speech_api(app: FastAPI, workspace: FixtureWorkspace) -> None:
+def mount_speech_api(app: FastAPI, workspace: Workspace) -> None:
     @app.get("/api/v1/settings/speech")
     def speech_settings():
         with read_database(workspace) as database:
@@ -88,3 +89,19 @@ def mount_speech_api(app: FastAPI, workspace: FixtureWorkspace) -> None:
             raise HTTPException(422)
         accepted, skipped = retry_failed_speech(workspace)
         return {"items": [public_attempt(attempt) for attempt in accepted], "skipped_segment_ids": skipped}
+
+    @app.post("/api/v1/segments/{segment_id}/ass", status_code=202)
+    def submit_ass(request: Request, segment_id: Annotated[int, Path(ge=1, le=2**63 - 1)]):
+        try:
+            return public_ass_attempt(enqueue_ass(workspace, segment_id))
+        except ValueError:
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "ass_segment_unavailable",
+                        "message": "字幕を生成できる確定録画として確認できません。",
+                        "correlation_id": request.state.correlation_id,
+                    },
+                },
+                status_code=409,
+            )

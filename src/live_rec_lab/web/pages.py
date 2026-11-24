@@ -15,14 +15,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException
 
 from ..db import connect
-from ..isolation import FixtureWorkspace
+from ..isolation import Workspace
+from ..retention import managed_recording_capacity, media_deletion_status
 from ..runtime import diagnose_fixture
+from ..settings import read_operations_settings
 from ..speech_jobs import read_speech_configuration
+from ..storage_audit import get_storage_audit
 from ..streamers import ACCOUNT_COLUMNS, account_view
 from ..web_port import PortRevisionConflict, WebPort, read_web_port, save_web_port
 from .preferences import DisplayConflict, DisplayPreferences, read_preferences, save_preferences
 from .queries import comment_page, history_page, like_pattern, page_rows, read_database, session_select
 from .screen_data import (
+    ASS_JOB_STATES,
+    SPEECH_JOB_STATES,
     active_snapshot,
     disk_summary,
     fixture_events,
@@ -31,6 +36,7 @@ from .screen_data import (
     platform_label,
     presentation_status,
     speech_cues,
+    speech_queue_page,
     verified_outputs,
 )
 
@@ -62,7 +68,7 @@ class WebPortUpdate(BaseModel):
     revision: Annotated[int, Field(strict=True, ge=0, le=2**63 - 2)]
 
 
-def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
+def mount_pages(app: FastAPI, workspace: Workspace, port: int) -> None:
     directory = Path(__file__).parent
     templates = Jinja2Templates(directory=directory / "templates")
     templates.env.filters.update(platform=platform_label, local_time=local_time, size=human_size)
@@ -78,6 +84,7 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
         page = dict(
             context,
             active_nav=key,
+            app_mode=workspace.mode,
             page_title=title or _TITLES[key],
             nav=_NAV,
             preferences=preferences,
@@ -201,6 +208,7 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
             if session is None:
                 raise HTTPException(404)
             outputs = verified_outputs(database, workspace, session_id)
+            deletion = media_deletion_status(database, session_id)
             expiry = database.execute(
                 "SELECT state, removed_comments FROM comment_expirations WHERE session_id = ?",
                 (session_id,),
@@ -208,7 +216,7 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
         return render(
             request,
             "recordings",
-            {"session": session, "outputs": outputs, "expiry": expiry, "back_query": back_query},
+            {"session": session, "outputs": outputs, "expiry": expiry, "back_query": back_query, "deletion": deletion},
             view="recording-detail",
             title="配信セッション詳細",
         )
@@ -269,23 +277,66 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
         )
 
     @app.get("/speech", response_class=HTMLResponse)
-    def speech(request: Request, q: Term = "", platform: Platform | None = None, page: Page = 1):
+    def speech(
+        request: Request,
+        q: Term = "",
+        platform: Platform = "",
+        session_id: Identity = None,
+        speech_state: Annotated[str, Query(max_length=24)] = "",
+        ass_state: Annotated[str, Query(max_length=24)] = "",
+        page: Page = 1,
+    ):
+        if (speech_state and speech_state not in SPEECH_JOB_STATES) or (ass_state and ass_state not in ASS_JOB_STATES):
+            raise HTTPException(422)
         with read_database(workspace) as database:
-            result = history_page(database, platform or None, None, q, page, _SIZE)
-            for item in result["items"]:
-                item["segments"] = verified_outputs(database, workspace, item["id"])
-        return render(request, "speech", {"result": result, "q": q, "platform": platform})
+            result = speech_queue_page(
+                database,
+                workspace,
+                platform=platform,
+                term=q,
+                session_id=session_id,
+                speech_state=speech_state,
+                ass_state=ass_state,
+                page=page,
+                page_size=_SIZE,
+            )
+        return render(
+            request,
+            "speech",
+            {
+                "result": result,
+                "q": q,
+                "platform": platform,
+                "session_id": session_id,
+                "speech_state": speech_state,
+                "ass_state": ass_state,
+                "speech_labels": SPEECH_JOB_STATES,
+                "ass_labels": ASS_JOB_STATES,
+            },
+        )
 
     @app.get("/speech/cues", response_class=HTMLResponse)
     def show_speech(
         request: Request,
         q: Term = "",
         session_id: Identity = None,
+        segment_id: Annotated[int, Query(ge=0, le=2**63 - 1)] = 0,
         order: Literal["asc", "desc"] = "asc",
         page: Page = 1,
     ):
         with read_database(workspace) as database:
-            items, more, unavailable = speech_cues(database, workspace, session_id, q, page, order)
+            if session_id is None and segment_id:
+                selected = database.execute(
+                    "SELECT session_id FROM recording_segments WHERE id = ?", (segment_id,)
+                ).fetchone()
+                if selected:
+                    session_id = selected["session_id"]
+            segments = database.execute(
+                "SELECT id, number FROM recording_segments WHERE session_id = ? ORDER BY number", (session_id,)
+            ).fetchall()
+            items, more, unavailable = speech_cues(
+                database, workspace, session_id, q, page, order, segment_id=segment_id or None
+            )
         return render(
             request,
             "speech",
@@ -294,6 +345,8 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
                 "q": q,
                 "order": order,
                 "session_id": session_id,
+                "segment_id": segment_id,
+                "segments": segments,
                 "unavailable": unavailable,
             },
             view="speech-cues",
@@ -304,6 +357,8 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
     def system(request: Request):
         measured = diagnose_fixture(workspace)
         capacity_free, capacity_total = disk_summary(workspace)
+        with read_database(workspace) as database:
+            capacity = managed_recording_capacity(database)
         return render(
             request,
             "system",
@@ -311,6 +366,9 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
                 "diagnosis": measured,
                 "capacity_free": capacity_free,
                 "capacity_total": capacity_total,
+                "capacity": capacity,
+                "recording_root": workspace.recordings,
+                "audit": get_storage_audit(workspace),
                 "port": port,
             },
         )
@@ -355,7 +413,16 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
     def settings(request: Request):
         with read_database(workspace) as database:
             audio = read_speech_configuration(database)
-        return render(request, "settings", {"audio": audio, "web_port": web_port_status(read_web_port(workspace))})
+        return render(
+            request,
+            "settings",
+            {
+                "audio": audio,
+                "web_port": web_port_status(read_web_port(workspace)),
+                "operations": read_operations_settings(workspace),
+                "recording_root": workspace.recordings,
+            },
+        )
 
     def web_port_status(saved: WebPort) -> dict:
         return {**asdict(saved), "current_port": port, "restart_required": saved.web_port != port}

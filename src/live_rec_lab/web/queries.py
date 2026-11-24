@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 
-from ..isolation import FixtureWorkspace
+from ..isolation import Workspace
 
 session_select = """
 SELECT stream_sessions.id, streamer_id, source_id, platform, normalized_id, streamers.display_name,
@@ -24,8 +24,8 @@ WHERE NOT EXISTS (SELECT 1 FROM comment_expirations WHERE comment_expirations.se
 
 
 @contextmanager
-def read_database(workspace: FixtureWorkspace) -> Iterator[sqlite3.Connection]:
-    checked = FixtureWorkspace.open(workspace.root)
+def read_database(workspace: Workspace) -> Iterator[sqlite3.Connection]:
+    checked = workspace.recheck()
     checked.require_ready()
     with closing(sqlite3.connect(checked.database.as_uri() + "?mode=ro", uri=True)) as database:
         database.row_factory = sqlite3.Row

@@ -14,7 +14,8 @@
   {% if expiry %}<p class="panel-note">{{ 'コメントは期限削除済みです。' if expiry.state == 'expired' else 'コメントは期限処理の照合中です。' }}</p>{% endif %}
   <div class="panel-links">
     <a href="/comments?mode=session&amp;session_id={{ session.id }}">配信のコメントを表示</a>
-    <a href="/speech/cues?session_id={{ session.id }}">発話本文を表示</a>
+    {% if request.query_params.get('speech_query') %}<a href="/speech/cues?{{ request.query_params.get('speech_query') }}">発話検索に戻る</a>
+    {% else %}<a href="/speech/cues?session_id={{ session.id }}">発話本文を表示</a>{% endif %}
     <a href="/logs?q={{ session.source_id | urlencode }}">関連ログを表示</a>
   </div>
 </section>
@@ -34,4 +35,25 @@
     </div>
   {% else %}<p class="empty">確定した録画セグメントがありません。</p>{% endif %}
 </section>
+{% if deletion or outputs %}
+<section class="panel separated">
+  <div class="section-head"><h2>録画の削除</h2></div>
+  {% if deletion %}
+    <p class="panel-note">{{ '削除済み' if deletion.state == 'completed' else '削除の照合が必要です。' }} · {{ deletion.files.removed }}ファイル</p>
+  {% endif %}
+  {% if session.stream_state == 'ended' and session.recording_state in ['completed', 'partial', 'cancelled', 'deleted'] and (not deletion or deletion.state != 'completed' or deletion.mode == 'files') and app_mode != 'normal' %}
+    <button type="button" class="button secondary" data-open="delete-recording">削除の選択肢を開く</button>
+    <dialog id="delete-recording" aria-labelledby="delete-recording-title">
+      <h2 id="delete-recording-title">録画の削除</h2>
+      <p>削除した動画と字幕は元に戻せません。「ファイル＋履歴」ではコメントと配信履歴も削除します。</p>
+      <form data-api="/api/v1/sessions/{{ session.id }}/media-deletion" data-method="POST" data-success="録画の削除を確認しました。" data-review-message="一部の削除を確認できませんでした。要確認の状態で記録しました。" data-completed-redirect="/recordings" action="#" method="dialog">
+        <label>範囲 <select name="mode"><option value="files">ファイルのみ</option><option value="files_and_history">ファイル＋履歴</option></select></label>
+        <label><input type="checkbox" name="confirmed" required> 削除範囲を確認した</label>
+        <p class="form-message" role="status" hidden></p>
+        <div class="form-actions"><button type="button" data-close class="button secondary">取り消す</button><button type="submit" class="button primary">削除する</button></div>
+      </form>
+    </dialog>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

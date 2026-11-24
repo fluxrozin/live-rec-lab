@@ -1,7 +1,9 @@
 """Explicitly budgeted, fixed-endpoint monitoring candidates."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
+from threading import Event
 
 import httpx
 
@@ -21,9 +23,16 @@ _MINUTE = timedelta(minutes=1)
 
 
 class ProbeClient:
-    def __init__(self, budget: ExternalBudget, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self, budget: ExternalBudget, *, transport: httpx.BaseTransport | None = None, stop: Event | None = None
+    ) -> None:
         self.budget = budget
         self.transport = transport
+        self.stop = stop
+
+    @property
+    def stopping(self) -> bool:
+        return self.stop is not None and self.stop.is_set()
 
     def tiktok(self, account: str, permission: LivePermission | None) -> LiveObservation:
         account = normalize_target("tiktok", account)
@@ -38,7 +47,7 @@ class ProbeClient:
             )
         except (BudgetDenied, httpx.RequestError) as error:
             return _probe_failure(error)
-        return parse_tiktok_room(response)
+        return replace(parse_tiktok_room(response, account), service="tiktok", account=account)
 
     def twitcasting(
         self,
@@ -48,19 +57,40 @@ class ProbeClient:
         client_secret: str,
         *,
         monitor_limit: int = 10,
+        known_movie_id: str | None = None,
     ) -> LiveObservation:
         account = normalize_target("twitcasting", account)
         if not client_id or not client_secret or not 1 <= monitor_limit <= 60:
             return LiveObservation(LiveState.UNKNOWN, reason="configuration_unavailable")
+        limits = (Limit("twitcasting", 60, _MINUTE), Limit("twitcasting-monitor", monitor_limit, _MINUTE))
+        auth = httpx.BasicAuth(client_id, client_secret)
         try:
             response = self._get(
                 "twitcasting",
                 account,
                 permission,
-                (Limit("twitcasting", 60, _MINUTE), Limit("twitcasting-monitor", monitor_limit, _MINUTE)),
+                limits,
                 f"https://apiv2.twitcasting.tv/users/{account}/current_live",
-                auth=httpx.BasicAuth(client_id, client_secret),
+                auth=auth,
             )
+            if (
+                response.status_code == 404
+                and known_movie_id
+                and known_movie_id.isascii()
+                and known_movie_id.isdecimal()
+                and len(known_movie_id) <= 30
+            ):
+                detail = self._get(
+                    "twitcasting",
+                    account,
+                    permission,
+                    limits,
+                    f"https://apiv2.twitcasting.tv/movies/{known_movie_id}",
+                    auth=auth,
+                )
+                confirmed = parse_twitcasting_live(detail, account)
+                if confirmed.live_id == known_movie_id:
+                    return confirmed
         except (BudgetDenied, httpx.RequestError) as error:
             return _probe_failure(error)
         return parse_twitcasting_live(response, account)
@@ -123,7 +153,11 @@ class ProbeClient:
         auth: httpx.Auth | None = None,
         operation: str = "detect",
     ) -> httpx.Response:
+        if self.stopping:
+            raise BudgetDenied("external collection is stopping")
         with self.budget.connection(permission, service, account, operation, limits) as budget:
+            if self.stopping:
+                raise BudgetDenied("external collection is stopping")
             headers = {"Accept": "application/json"}
             if service == "twitcasting":
                 headers["X-Api-Version"] = "2.0"

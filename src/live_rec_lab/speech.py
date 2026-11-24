@@ -1,6 +1,7 @@
 """Local inference and subtitle rendering for verified media timelines."""
 
 import re
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -41,6 +42,7 @@ def recognize_local(
     if device not in {"cuda", "cpu"}:
         raise SpeechBlocked("speech device must be cuda or cpu")
     try:
+        import numpy as np
         from faster_whisper import WhisperModel
     except ImportError as error:
         raise SpeechBlocked("speech dependencies are unavailable") from error
@@ -54,8 +56,23 @@ def recognize_local(
         )
     except (RuntimeError, ValueError) as error:
         raise SpeechBlocked(f"local speech model cannot initialize on {device}") from error
+    with wave.open(str(audio), "rb") as source:
+        if (
+            source.getnchannels() != 1
+            or source.getsampwidth() != 2
+            or source.getframerate() != 16000
+            or source.getcomptype() != "NONE"
+        ):
+            raise ValueError("speech audio must be 16 kHz mono signed 16-bit PCM")
+        count = source.getnframes()
+        frames = source.readframes(count)
+    if not count or len(frames) != count * 2:
+        raise ValueError("speech audio is empty or truncated")
+    # FFmpeg already decoded and aligned this PCM. Avoid decoding it a second time.
+    samples = np.frombuffer(frames, dtype="<i2").astype(np.float32)
+    samples *= np.float32(1 / 32768)
     segments, _ = recognizer.transcribe(
-        str(audio),
+        samples,
         language=language,
         temperature=0.0,
         vad_filter=True,
@@ -99,7 +116,7 @@ def _line(start: int, end: int, style: str, text: str, margin: int = 0) -> str:
 
 def render_combined_ass(
     speech: list[SpeechCue],
-    comments: list[CommentCue],
+    comments: list[CommentCue] | list[SpeechCue],
     duration_ms: int,
     width: int,
     height: int,
@@ -147,12 +164,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Text
     lane_space = (height - margin * 2) // (size * 2) - 1
     lanes = [0] * min(max_comment_lanes, max(0, lane_space))
     omitted = 0
-    for cue in sorted(comments, key=lambda value: value.offset_ms):
-        start = (cue.offset_ms + 9) // 10
-        end = min(cue.offset_ms + comment_display_ms, duration_ms) // 10
-        if cue.offset_ms < 0 or start >= end:
+    comment_captions = [
+        cue
+        if isinstance(cue, SpeechCue)
+        else SpeechCue(cue.offset_ms, cue.offset_ms + comment_display_ms, comment_text(cue))
+        for cue in comments
+    ]
+    for cue in sorted(comment_captions, key=lambda value: value.start_ms):
+        start = (cue.start_ms + 9) // 10
+        end = min(cue.end_ms, duration_ms) // 10
+        if cue.start_ms < 0 or start >= end:
             continue
-        text = _ass_text(comment_text(cue))
+        text = _ass_text(cue.text)
         text_lines = text.count(r"\N") + 1
         lane = next(
             (

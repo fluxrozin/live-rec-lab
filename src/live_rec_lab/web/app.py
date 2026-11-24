@@ -15,7 +15,9 @@ from starlette.exceptions import HTTPException
 
 from .. import streamers as registry
 from ..db import connect
-from ..isolation import FixtureWorkspace, IsolationError
+from ..isolation import FixtureWorkspace, IsolationError, Workspace
+from .developer import DOC_PATHS, mount_developer_docs
+from .operations import mount_operations
 from .pages import mount_pages
 from .queries import comment_page, page_rows, read_database, session_select
 from .speech_api import mount_speech_api
@@ -71,11 +73,20 @@ def _error(request: Request, status: int, code: str, message: str) -> JSONRespon
 
 
 def create_fixture_app(workspace: FixtureWorkspace, port: int = 8083) -> FastAPI:
+    if not isinstance(workspace, FixtureWorkspace):
+        raise IsolationError("expected a synthetic workspace")
+    return create_app(workspace, port)
+
+
+def create_app(workspace: Workspace, port: int) -> FastAPI:
     if not 1024 <= port <= 65535:
         raise ValueError("invalid fixture port")
-    workspace = FixtureWorkspace.open(workspace.root)
+    workspace = workspace.recheck()
     workspace.require_ready()
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    developer = workspace.mode == "developer"
+    app = FastAPI(
+        title="LiveRecorder", docs_url=None, redoc_url=None, openapi_url="/openapi.json" if developer else None
+    )
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     app.state.csrf_token = secrets.token_urlsafe(32)
 
@@ -107,6 +118,10 @@ def create_fixture_app(workspace: FixtureWorkspace, port: int = 8083) -> FastAPI
                     )
                     response = _error(request, 503, "workspace_unavailable", "隔離データを読み取れません。")
         response.headers.update(_HEADERS)
+        if developer and request.url.path in DOC_PATHS and response.status_code == 200:
+            response.headers["Content-Security-Policy"] = _HEADERS["Content-Security-Policy"].replace(
+                "style-src 'self'; img-src 'self';", "style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+            )
         return response
 
     @app.exception_handler(RequestValidationError)
@@ -127,7 +142,7 @@ def create_fixture_app(workspace: FixtureWorkspace, port: int = 8083) -> FastAPI
     def health():
         with read_database(workspace) as database:
             database.execute("SELECT id FROM stream_sessions LIMIT 1").fetchone()
-        return {"mode": "fixture", "alive": True, "ready": True, "recording_available": None}
+        return {"mode": workspace.mode, "alive": True, "ready": True, "recording_available": None}
 
     @app.get("/api/v1/sessions")
     def sessions(page: Page = 1, page_size: PageSize = 50):
@@ -207,5 +222,8 @@ def create_fixture_app(workspace: FixtureWorkspace, port: int = 8083) -> FastAPI
 
     mount_pages(app, workspace, port)
     mount_speech_api(app, workspace)
+    mount_operations(app, workspace)
+    if developer:
+        mount_developer_docs(app)
 
     return app

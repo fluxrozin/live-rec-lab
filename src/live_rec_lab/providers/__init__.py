@@ -1,9 +1,11 @@
 """Normalize service responses before they enter the collection scheduler."""
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -25,17 +27,19 @@ class LiveObservation:
     reason: str | None = None
     service: str | None = None
     account: str | None = None
+    hls_url: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
 class ProviderComment:
-    source_id: str
+    source_id: str | None
     body: str
     posted_at: datetime | None
     author_id: str | None
     author_name: str | None
     anonymous: bool = False
     anonymous_number: int | None = None
+    received_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -90,7 +94,7 @@ def _object_response(response: httpx.Response) -> dict[str, Any]:
     return payload
 
 
-def parse_tiktok_room(response: httpx.Response) -> LiveObservation:
+def parse_tiktok_room(response: httpx.Response, account: str | None = None) -> LiveObservation:
     try:
         payload = _object_response(response)
     except ValueError as error:
@@ -98,6 +102,9 @@ def parse_tiktok_room(response: httpx.Response) -> LiveObservation:
     data = _mapping(payload.get("data"))
     live = _mapping(data.get("liveRoom"))
     user = _mapping(data.get("user"))
+    reported_account = _text(user.get("uniqueId"))
+    if account and reported_account and reported_account.casefold() != account.casefold():
+        return LiveObservation(LiveState.UNKNOWN, reason="account_mismatch")
     status = live.get("status")
     if type(status) is not int or status not in (2, 4):
         return LiveObservation(LiveState.UNKNOWN, reason="unconfirmed_room_status")
@@ -124,13 +131,15 @@ def parse_twitcasting_live(response: httpx.Response, target: str) -> LiveObserva
     ):
         return LiveObservation(LiveState.UNKNOWN, reason="broadcaster_mismatch")
     live_id = _numeric_id(movie.get("id"))
-    if movie.get("is_live") is False:
-        return LiveObservation(LiveState.OFFLINE, live_id=live_id)
-    if movie.get("is_live") is not True or not live_id:
-        return LiveObservation(LiveState.UNKNOWN, reason="unconfirmed_movie_status")
     restrictions = tuple(movie.get(key) for key in ("is_protected", "is_membership", "is_premier"))
     if any(restriction is True for restriction in restrictions):
-        return LiveObservation(LiveState.RESTRICTED, live_id=live_id, reason="restricted_movie")
+        return LiveObservation(
+            LiveState.RESTRICTED, live_id=live_id, reason="restricted_movie", service="twitcasting", account=target
+        )
+    if movie.get("is_live") is False:
+        return LiveObservation(LiveState.OFFLINE, live_id=live_id, service="twitcasting", account=target)
+    if movie.get("is_live") is not True or not live_id:
+        return LiveObservation(LiveState.UNKNOWN, reason="unconfirmed_movie_status")
     if any(restriction is not False for restriction in restrictions):
         return LiveObservation(LiveState.UNKNOWN, reason="unconfirmed_access")
     return LiveObservation(
@@ -140,7 +149,26 @@ def parse_twitcasting_live(response: httpx.Response, target: str) -> LiveObserva
         started_at=_utc_seconds(movie.get("created")),
         service="twitcasting",
         account=target,
+        hls_url=_official_twitcasting_hls(_text(movie.get("hls_url")), _text(broadcaster.get("screen_id"))),
     )
+
+
+def _official_twitcasting_hls(value: str | None, screen_id: str | None) -> str | None:
+    if not value or not screen_id or not re.fullmatch(r"[A-Za-z0-9_]{1,50}", screen_id):
+        return None
+    if len(value) > 2048 or any(ord(character) <= 32 for character in value) or "#" in value or "\\" in value:
+        return None
+    try:
+        url = urlsplit(value)
+        if (
+            url.scheme == "https"
+            and url.netloc.lower() in {"twitcasting.tv", "twitcasting.tv:443"}
+            and url.path.removesuffix("/") == f"/{screen_id}/metastream.m3u8"
+        ):
+            return value
+    except ValueError:
+        pass
+    return None
 
 
 def parse_twitcasting_comments(response: httpx.Response, movie_id: str) -> CommentPage:

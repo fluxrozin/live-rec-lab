@@ -9,16 +9,16 @@ from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
 from .db import connect
-from .isolation import FixtureWorkspace
+from .isolation import Workspace
 from .maintenance import check_fixture_restore, fixture_backup_path
 from .media import generation, publish_exclusive
 from .runtime import snapshot_fixture_database
 
 
 @contextmanager
-def _stopped_workspace(workspace: FixtureWorkspace) -> Iterator[None]:
+def _stopped_workspace(workspace: Workspace) -> Iterator[None]:
     with ExitStack() as locks:
-        for worker in ("server", "speech", "comments", None):
+        for worker in ("server", "collection", "speech", "ass", "comments", "audit", None):
             locks.enter_context(workspace.exclusive(worker=worker, maintenance=True))
         yield
 
@@ -59,7 +59,7 @@ def _sync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def prepare_fixture_restore(workspace: FixtureWorkspace, snapshot: str) -> dict[str, object]:
+def prepare_fixture_restore(workspace: Workspace, snapshot: str) -> dict[str, object]:
     with _stopped_workspace(workspace):
         workspace.require_ready()
         candidate = fixture_backup_path(workspace, snapshot)
@@ -69,13 +69,14 @@ def prepare_fixture_restore(workspace: FixtureWorkspace, snapshot: str) -> dict[
         if _digest(candidate) != candidate_digest:
             raise ValueError("restore candidate changed during preflight")
         if issues:
-            return {"mode": "fixture", "snapshot": snapshot, "state": "blocked", "issues": issues}
+            return {"mode": workspace.mode, "snapshot": snapshot, "state": "blocked", "issues": issues}
 
         rollback = snapshot_fixture_database(workspace)
         _require_standalone(workspace.database)
         document = {
             "version": 1,
             "root": str(workspace.root),
+            "mode": workspace.mode,
             "snapshot": snapshot,
             "snapshot_sha256": candidate_digest,
             "rollback": rollback.name,
@@ -94,10 +95,10 @@ def prepare_fixture_restore(workspace: FixtureWorkspace, snapshot: str) -> dict[
             finally:
                 temporary.unlink(missing_ok=True)
         workspace.event("restore", "prepared", rollback.name)
-        return {"mode": "fixture", "snapshot": snapshot, "rollback": rollback.name, "state": "prepared"}
+        return {"mode": workspace.mode, "snapshot": snapshot, "rollback": rollback.name, "state": "prepared"}
 
 
-def finish_fixture_restore(workspace: FixtureWorkspace) -> dict[str, object]:
+def finish_fixture_restore(workspace: Workspace) -> dict[str, object]:
     with _stopped_workspace(workspace):
         marker = workspace.restore_marker
         marker_generation = generation(marker)
@@ -110,6 +111,7 @@ def finish_fixture_restore(workspace: FixtureWorkspace) -> dict[str, object]:
             not isinstance(document, dict)
             or document.get("version") != 1
             or document.get("root") != str(workspace.root)
+            or document.get("mode", "fixture") != workspace.mode
             or not all(
                 isinstance(document.get(key), str)
                 for key in ("snapshot", "rollback", "snapshot_sha256", "rollback_sha256")
@@ -129,7 +131,7 @@ def finish_fixture_restore(workspace: FixtureWorkspace) -> dict[str, object]:
 
         issues = check_fixture_restore(workspace, rollback, workspace.database, immutable_current=True)
         if issues:
-            return {"mode": "fixture", "state": "blocked", "issues": issues}
+            return {"mode": workspace.mode, "state": "blocked", "issues": issues}
         if _digest(workspace.database) != installed or generation(marker) != marker_generation:
             raise ValueError("restore files changed during verification")
         with workspace.database.open("rb") as database:
@@ -138,4 +140,4 @@ def finish_fixture_restore(workspace: FixtureWorkspace) -> dict[str, object]:
         workspace.event("restore", state, rollback.name)
         marker.unlink()
         _sync_directory(marker.parent)
-        return {"mode": "fixture", "state": state}
+        return {"mode": workspace.mode, "state": state}

@@ -11,9 +11,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .db import connect
-from .isolation import FixtureWorkspace
+from .isolation import FixtureWorkspace, IsolationError, Workspace
 from .media import automatic_stem, record_fixture_video
 from .publication import matches_media, publish_initial_subtitle
+from .retention import deleted_source, media_deletion_status, next_segment_id, next_session_id, record_session_end
 from .subtitles import CommentCue, render_comment_srt
 
 _MID_PIPELINE = ("pending", "running")
@@ -46,18 +47,36 @@ def fixture_comments() -> Iterable[CommentCue]:
 
 
 def run_fixture(workspace: FixtureWorkspace, service: str = "tiktok") -> dict[str, object]:
+    if workspace.mode != "fixture":
+        raise IsolationError("synthetic collection requires a fixture workspace")
     stream = FIXTURE_STREAMS[service]
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         prior = find_fixture_session(database, stream)
         if prior is not None:
             _mark_interruption(database, prior, workspace, stream.source_id)
             return _report(database, prior["id"], workspace)
+        registered = database.execute(
+            "SELECT id FROM streamers WHERE platform = ? AND normalized_id = ?", (stream.platform, stream.streamer)
+        ).fetchone()
+        if registered is not None and deleted_source(database, registered["id"], stream.source_id):
+            return {
+                "mode": "fixture",
+                "session_id": None,
+                "stream_state": "ended",
+                "recording_state": "deleted",
+                "comment_state": "deleted",
+                "subtitle_state": "deleted",
+                "comment_count": None,
+                "video": None,
+                "comment_srt": None,
+            }
         observation = observe_fixture()
         state = "unknown" if observation is None else "live" if observation else "offline"
         workspace.event("monitor", state, stream.source_id)
         if state != "live":
             return {
                 "mode": "fixture",
+                "session_id": None,
                 "stream_state": state,
                 "recording_state": "not_started",
                 "comment_state": "not_started",
@@ -68,23 +87,28 @@ def run_fixture(workspace: FixtureWorkspace, service: str = "tiktok") -> dict[st
             }
 
         with database:
-            streamer = database.execute(
-                "INSERT INTO streamers (platform, normalized_id, enabled) VALUES (?, ?, 1)",
-                (stream.platform, stream.streamer),
-            ).lastrowid
-            session_id = database.execute(
+            streamer_id = (
+                registered["id"]
+                if registered is not None
+                else database.execute(
+                    "INSERT INTO streamers (platform, normalized_id, enabled) VALUES (?, ?, 1)",
+                    (stream.platform, stream.streamer),
+                ).lastrowid
+            )
+            session_id = next_session_id(database)
+            database.execute(
                 """
-                INSERT INTO stream_sessions (streamer_id, source_id, title, started_at, stream_state)
-                VALUES (?, ?, ?, ?, 'live')
+                INSERT INTO stream_sessions (id, streamer_id, source_id, title, started_at, stream_state)
+                VALUES (?, ?, ?, ?, ?, 'live')
                 """,
-                (streamer, stream.source_id, stream.title, stream.started.astimezone(UTC).isoformat()),
-            ).lastrowid
-        assert session_id is not None
+                (session_id, streamer_id, stream.source_id, stream.title, stream.started.astimezone(UTC).isoformat()),
+            )
         _record_comments(database, session_id, workspace, stream)
         _record_video(database, session_id, workspace, stream)
         _publish_comment_subtitle(database, session_id, workspace, stream.source_id)
         with database:
             database.execute("UPDATE stream_sessions SET stream_state = 'ended' WHERE id = ?", (session_id,))
+            record_session_end(database, session_id, datetime.now(UTC))
         workspace.event("monitor", "ended", stream.source_id)
         return _report(database, session_id, workspace)
 
@@ -101,7 +125,7 @@ def find_fixture_session(database: sqlite3.Connection, stream: FixtureStream) ->
 
 
 def _record_comments(
-    database: sqlite3.Connection, session_id: int, workspace: FixtureWorkspace, stream: FixtureStream
+    database: sqlite3.Connection, session_id: int, workspace: Workspace, stream: FixtureStream
 ) -> None:
     status = "completed"
     try:
@@ -134,8 +158,9 @@ def _record_comments(
         database.execute("UPDATE stream_sessions SET comment_state = ? WHERE id = ?", (status, session_id))
 
 
-def _media_directory(database: sqlite3.Connection, workspace: FixtureWorkspace, path: Path) -> Path:
-    relative_path = str(path.relative_to(workspace.root))
+def _media_directory(database: sqlite3.Connection, workspace: Workspace, path: Path) -> Path:
+    workspace.require_media()
+    relative_path = str(workspace.media_relative(path))
     existing = database.execute(
         "SELECT device, inode FROM media_directories WHERE relative_path = ?", (relative_path,)
     ).fetchone()
@@ -158,9 +183,7 @@ def _media_directory(database: sqlite3.Connection, workspace: FixtureWorkspace, 
     return path
 
 
-def _record_video(
-    database: sqlite3.Connection, session_id: int, workspace: FixtureWorkspace, stream: FixtureStream
-) -> None:
+def _record_video(database: sqlite3.Connection, session_id: int, workspace: Workspace, stream: FixtureStream) -> None:
     with database:
         database.execute("UPDATE stream_sessions SET recording_state = 'running' WHERE id = ?", (session_id,))
     try:
@@ -172,10 +195,16 @@ def _record_video(
         with database:
             database.execute(
                 """
-                INSERT INTO recording_segments (session_id, number, video_path, video_generation, duration_ms)
-                VALUES (?, 1, ?, ?, ?)
+                INSERT INTO recording_segments (id, session_id, number, video_path, video_generation, duration_ms)
+                VALUES (?, ?, 1, ?, ?, ?)
                 """,
-                (session_id, str(video.relative_to(workspace.root)), video_generation, duration_ms),
+                (
+                    next_segment_id(database),
+                    session_id,
+                    str(workspace.media_relative(video)),
+                    video_generation,
+                    duration_ms,
+                ),
             )
             database.execute("UPDATE stream_sessions SET recording_state = 'completed' WHERE id = ?", (session_id,))
     except (OSError, ValueError, KeyError, sqlite3.Error, subprocess.SubprocessError) as error:
@@ -198,7 +227,7 @@ def comment_cues(database: sqlite3.Connection, session_id: int) -> list[CommentC
 
 
 def _publish_comment_subtitle(
-    database: sqlite3.Connection, session_id: int, workspace: FixtureWorkspace, source_id: str
+    database: sqlite3.Connection, session_id: int, workspace: Workspace, source_id: str
 ) -> None:
     segment = database.execute("SELECT * FROM recording_segments WHERE session_id = ?", (session_id,)).fetchone()
     state = database.execute("SELECT comment_state FROM stream_sessions WHERE id = ?", (session_id,)).fetchone()[0]
@@ -218,9 +247,7 @@ def _publish_comment_subtitle(
         database.execute("UPDATE stream_sessions SET subtitle_state = ? WHERE id = ?", (status, session_id))
 
 
-def _mark_interruption(
-    database: sqlite3.Connection, prior: sqlite3.Row, workspace: FixtureWorkspace, source_id: str
-) -> None:
+def _mark_interruption(database: sqlite3.Connection, prior: sqlite3.Row, workspace: Workspace, source_id: str) -> None:
     if prior["stream_state"] != "live":
         return
     with database:
@@ -231,7 +258,7 @@ def _mark_interruption(
     workspace.event("monitor", "interrupted", source_id)
 
 
-def _report(database: sqlite3.Connection, session_id: int, workspace: FixtureWorkspace) -> dict[str, object]:
+def _report(database: sqlite3.Connection, session_id: int, workspace: Workspace) -> dict[str, object]:
     state = database.execute("SELECT * FROM stream_sessions WHERE id = ?", (session_id,)).fetchone()
     segment = database.execute("SELECT * FROM recording_segments WHERE session_id = ?", (session_id,)).fetchone()
     subtitle = database.execute(
@@ -243,15 +270,21 @@ def _report(database: sqlite3.Connection, session_id: int, workspace: FixtureWor
         (session_id,),
     ).fetchone()
     recording_state, subtitle_state = state["recording_state"], state["subtitle_state"]
-    video_ok = bool(segment and matches_media(workspace, segment["video_path"], segment["video_generation"]))
+    operation = media_deletion_status(database, session_id)
+    video_ok = bool(
+        operation is None and segment and matches_media(workspace, segment["video_path"], segment["video_generation"])
+    )
     subtitle_ok = bool(
         video_ok and subtitle and matches_media(workspace, subtitle["relative_path"], subtitle["file_generation"])
     )
-    if (segment or recording_state == "completed") and not video_ok:
+    if operation:
+        if operation["state"] != "completed":
+            recording_state = subtitle_state = "needs_review"
+    elif (segment or recording_state == "completed") and not video_ok:
         recording_state = "needs_review"
-    if (subtitle or subtitle_state in {"completed", "partial"}) and not subtitle_ok:
+    if not operation and (subtitle or subtitle_state in {"completed", "partial"}) and not subtitle_ok:
         subtitle_state = "needs_review"
-    if (recording_state, subtitle_state) != (state["recording_state"], state["subtitle_state"]):
+    if not operation and (recording_state, subtitle_state) != (state["recording_state"], state["subtitle_state"]):
         with database:
             database.execute(
                 "UPDATE stream_sessions SET recording_state = ?, subtitle_state = ? WHERE id = ?",
@@ -261,6 +294,7 @@ def _report(database: sqlite3.Connection, session_id: int, workspace: FixtureWor
     count = database.execute("SELECT COUNT(*) FROM comments WHERE session_id = ?", (session_id,)).fetchone()[0]
     return {
         "mode": "fixture",
+        "session_id": session_id,
         "stream_state": state["stream_state"],
         "recording_state": recording_state,
         "comment_state": state["comment_state"],

@@ -7,14 +7,15 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 
-from .collection import comment_cues
+from .ass_jobs import queue_ass_after_speech
 from .db import connect
-from .isolation import FixtureWorkspace
-from .media import fixture_dimensions
-from .publication import matches_media, publish_subtitle_revision
-from .speech import SpeechBlocked, SpeechCue, render_combined_ass, render_speech_srt
-from .speech_worker import AudioUnavailable, run_local_worker
+from .isolation import Workspace
+from .publication import publish_subtitle_revision
+from .speech import SpeechBlocked, SpeechCue, render_speech_srt
+from .speech_inputs import verified_segment
+from .speech_worker import AudioUnavailable, SpeechInterrupted, run_local_worker
 
 _QUEUE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS speech_attempts (
@@ -29,7 +30,8 @@ CREATE TABLE IF NOT EXISTS speech_attempts (
     queued_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT,
-    reason TEXT
+    reason TEXT,
+    recovery_depth INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS speech_attempts_active
     ON speech_attempts(segment_id) WHERE state IN ('queued', 'running');
@@ -43,13 +45,7 @@ CREATE TABLE IF NOT EXISTS speech_configuration (
     revision INTEGER NOT NULL
 );
 """
-_SEGMENT = """
-SELECT recording_segments.*, stream_sessions.stream_state, stream_sessions.recording_state,
-       stream_sessions.comment_state, stream_sessions.source_id
-FROM recording_segments JOIN stream_sessions ON stream_sessions.id = recording_segments.session_id
-WHERE recording_segments.id = ?
-"""
-_SETTLED_RECORDING = {"completed", "partial", "cancelled"}
+_MAX_RECOVERY_DEPTH = 2
 
 
 @dataclass(frozen=True)
@@ -91,6 +87,7 @@ class SpeechAttempt:
     started_at: str | None
     finished_at: str | None
     reason: str | None
+    recovery_depth: int = 0
 
 
 class SpeechSettingsConflict(ValueError):
@@ -103,6 +100,10 @@ def _now() -> str:
 
 def ensure_speech_schema(database: sqlite3.Connection) -> None:
     database.executescript(_QUEUE_SCHEMA)
+    columns = {column["name"] for column in database.execute("PRAGMA table_info(speech_attempts)")}
+    if "recovery_depth" not in columns:
+        with database:
+            database.execute("ALTER TABLE speech_attempts ADD COLUMN recovery_depth INTEGER NOT NULL DEFAULT 0")
 
 
 def _has_table(database: sqlite3.Connection, table: str) -> bool:
@@ -127,7 +128,7 @@ def read_speech_configuration(database: sqlite3.Connection) -> SpeechConfigurati
     return SpeechConfiguration(**values)
 
 
-def save_speech_configuration(workspace: FixtureWorkspace, configuration: SpeechConfiguration) -> SpeechConfiguration:
+def save_speech_configuration(workspace: Workspace, configuration: SpeechConfiguration) -> SpeechConfiguration:
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         ensure_speech_schema(database)
         with database:
@@ -161,8 +162,8 @@ def latest_speech(database: sqlite3.Connection, segment_id: int) -> SpeechAttemp
     return _attempt(row) if row else None
 
 
-def speech_attempts(workspace: FixtureWorkspace) -> list[SpeechAttempt]:
-    workspace = FixtureWorkspace.open(workspace.root)
+def speech_attempts(workspace: Workspace) -> list[SpeechAttempt]:
+    workspace = workspace.recheck()
     workspace.require_ready()
     with closing(sqlite3.connect(workspace.database.as_uri() + "?mode=ro", uri=True)) as database:
         database.row_factory = sqlite3.Row
@@ -171,36 +172,19 @@ def speech_attempts(workspace: FixtureWorkspace) -> list[SpeechAttempt]:
         return [_attempt(row) for row in database.execute("SELECT * FROM speech_attempts ORDER BY id DESC LIMIT 200")]
 
 
-def _verified_segment(
-    database: sqlite3.Connection,
-    workspace: FixtureWorkspace,
-    segment_id: int,
-    input_generation: str | None = None,
-) -> sqlite3.Row:
-    segment = database.execute(_SEGMENT, (segment_id,)).fetchone()
-    if segment is None:
-        raise ValueError("recorded segment not found")
-    if segment["stream_state"] != "ended" or segment["recording_state"] not in _SETTLED_RECORDING:
-        raise ValueError("speech requires a settled recording")
-    if (input_generation is not None and segment["video_generation"] != input_generation) or not matches_media(
-        workspace,
-        segment["video_path"],
-        segment["video_generation"],
-    ):
-        raise ValueError("video generation changed")
-    return segment
-
-
 def _queue(
     database: sqlite3.Connection,
     segment: sqlite3.Row,
     configuration: SpeechConfiguration,
     origin: str,
+    *,
+    recovery_depth: int = 0,
 ) -> SpeechAttempt:
     row = database.execute(
         """
-        INSERT INTO speech_attempts (segment_id, video_generation, state, model, language, device, origin, queued_at)
-        VALUES (?, ?, 'queued', ?, ?, ?, ?, ?) RETURNING *
+        INSERT INTO speech_attempts (
+            segment_id, video_generation, state, model, language, device, origin, queued_at, recovery_depth
+        ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?) RETURNING *
     """,
         (
             segment["id"],
@@ -210,15 +194,16 @@ def _queue(
             configuration.device,
             origin,
             _now(),
+            recovery_depth,
         ),
     ).fetchone()
     return _attempt(row)
 
 
-def enqueue_speech(workspace: FixtureWorkspace, segment_id: int) -> SpeechAttempt:
+def enqueue_speech(workspace: Workspace, segment_id: int) -> SpeechAttempt:
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         ensure_speech_schema(database)
-        segment = _verified_segment(database, workspace, segment_id)
+        segment = verified_segment(database, workspace, segment_id)
         with database:
             previous = latest_speech(database, segment_id)
             configuration = read_speech_configuration(database)
@@ -236,7 +221,7 @@ def enqueue_speech(workspace: FixtureWorkspace, segment_id: int) -> SpeechAttemp
             return _queue(database, segment, configuration, "manual")
 
 
-def _enqueue_ready(database: sqlite3.Connection, workspace: FixtureWorkspace) -> None:
+def _enqueue_ready(database: sqlite3.Connection, workspace: Workspace) -> None:
     configuration = read_speech_configuration(database)
     if not configuration.enabled:
         return
@@ -252,7 +237,7 @@ def _enqueue_ready(database: sqlite3.Connection, workspace: FixtureWorkspace) ->
     with database:
         for row in candidates:
             try:
-                segment = _verified_segment(database, workspace, row["id"])
+                segment = verified_segment(database, workspace, row["id"])
             except ValueError:
                 continue
             _queue(database, segment, configuration, "automatic")
@@ -269,7 +254,7 @@ def _finish(database: sqlite3.Connection, attempt_id: int, state: str, reason: s
     return _attempt(row)
 
 
-def _claim(database: sqlite3.Connection, workspace: FixtureWorkspace, automatic: bool) -> SpeechAttempt | None:
+def _claim(database: sqlite3.Connection, workspace: Workspace, automatic: bool) -> SpeechAttempt | None:
     ensure_speech_schema(database)
     with database:
         database.execute(
@@ -286,12 +271,15 @@ def _claim(database: sqlite3.Connection, workspace: FixtureWorkspace, automatic:
     """).fetchall()
     for row in abandoned:
         try:
-            segment = _verified_segment(database, workspace, row["segment_id"], row["video_generation"])
+            segment = verified_segment(database, workspace, row["segment_id"], row["video_generation"])
         except ValueError:
             continue
         with database:
+            if row["recovery_depth"] >= _MAX_RECOVERY_DEPTH:
+                _finish(database, row["id"], "failed", "automatic_retry_exhausted")
+                continue
             settings = SpeechConfiguration(model=row["model"], language=row["language"], device=row["device"])
-            _queue(database, segment, settings, row["origin"])
+            _queue(database, segment, settings, row["origin"], recovery_depth=row["recovery_depth"] + 1)
     if automatic:
         _enqueue_ready(database, workspace)
     configuration = read_speech_configuration(database)
@@ -310,22 +298,28 @@ def _claim(database: sqlite3.Connection, workspace: FixtureWorkspace, automatic:
 
 
 def process_speech(
-    workspace: FixtureWorkspace,
-    recognize: Callable[[FixtureWorkspace, SpeechAttempt, Path], list[SpeechCue]] | None = None,
+    workspace: Workspace,
+    recognize: Callable[[Workspace, SpeechAttempt, Path], list[SpeechCue]] | None = None,
     *,
     automatic: bool = False,
+    stop: Event | None = None,
 ) -> SpeechAttempt | None:
+    if stop is not None and stop.is_set():
+        return None
+    workspace.require_media()
     with workspace.exclusive(worker="speech") as worker_lock:
         with workspace.exclusive(), closing(connect(workspace.database)) as database:
             attempt = _claim(database, workspace, automatic)
             if not attempt:
                 return None
             try:
-                segment = _verified_segment(database, workspace, attempt.segment_id, attempt.video_generation)
+                segment = verified_segment(database, workspace, attempt.segment_id, attempt.video_generation)
             except ValueError:
                 return _finish(database, attempt.id, "needs_review", "input_generation_changed")
         try:
-            video = workspace.root / segment["video_path"]
+            video = workspace.media_path(segment["video_path"])
+            if stop is not None and stop.is_set():
+                raise SpeechInterrupted
             speech = (
                 run_local_worker(
                     workspace,
@@ -334,10 +328,13 @@ def process_speech(
                     language=attempt.language,
                     device=attempt.device,
                     worker_lock=worker_lock,
+                    stop=stop,
                 )
                 if recognize is None
                 else recognize(workspace, attempt, video)
             )
+        except SpeechInterrupted:
+            return _end_attempt(workspace, attempt, "interrupted", "worker_stopped")
         except AudioUnavailable:
             return _end_attempt(workspace, attempt, "not_applicable", "no_audio")
         except SpeechBlocked as error:
@@ -347,20 +344,22 @@ def process_speech(
         except KeyboardInterrupt:
             _end_attempt(workspace, attempt, "interrupted", "worker_stopped")
             raise
+        if stop is not None and stop.is_set():
+            return _end_attempt(workspace, attempt, "interrupted", "worker_stopped")
         return _publish(workspace, attempt, speech)
 
 
-def _end_attempt(workspace: FixtureWorkspace, attempt: SpeechAttempt, state: str, reason: str) -> SpeechAttempt:
+def _end_attempt(workspace: Workspace, attempt: SpeechAttempt, state: str, reason: str) -> SpeechAttempt:
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         result = _finish(database, attempt.id, state, reason)
     workspace.event("speech", reason, f"speech-{attempt.id}")
     return result
 
 
-def _publish(workspace: FixtureWorkspace, attempt: SpeechAttempt, cues: list[SpeechCue]) -> SpeechAttempt:
+def _publish(workspace: Workspace, attempt: SpeechAttempt, cues: list[SpeechCue]) -> SpeechAttempt:
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         try:
-            segment = _verified_segment(database, workspace, attempt.segment_id, attempt.video_generation)
+            segment = verified_segment(database, workspace, attempt.segment_id, attempt.video_generation)
         except ValueError:
             return _finish(database, attempt.id, "needs_review", "input_generation_changed")
         speech = render_speech_srt(cues, segment["duration_ms"])
@@ -368,40 +367,15 @@ def _publish(workspace: FixtureWorkspace, attempt: SpeechAttempt, cues: list[Spe
             publish_subtitle_revision(database, workspace, segment, "speech", speech, attempt.id + 1)
         except (OSError, ValueError, sqlite3.Error):
             return _finish(database, attempt.id, "needs_review", "speech_publication_failed")
-        ass_reason = _initial_ass(database, workspace, attempt, segment, cues)
-        return _finish(database, attempt.id, "completed" if speech else "no_speech", ass_reason)
+        completed = _finish(database, attempt.id, "completed" if speech else "no_speech")
+        try:
+            queue_ass_after_speech(database, segment)
+        except sqlite3.Error as error:
+            workspace.event("ass", "enqueue_after_speech_failed", f"speech-{attempt.id}", error)
+        return completed
 
 
-def _initial_ass(
-    database: sqlite3.Connection,
-    workspace: FixtureWorkspace,
-    attempt: SpeechAttempt,
-    segment: sqlite3.Row,
-    cues: list[SpeechCue],
-) -> str | None:
-    if database.execute("SELECT 1 FROM comment_expirations WHERE session_id = ?", (segment["session_id"],)).fetchone():
-        return "ass_retention_blocked"
-    comments = comment_cues(database, segment["session_id"])
-    try:
-        if not (comments or render_speech_srt(cues, segment["duration_ms"])):
-            publish_subtitle_revision(database, workspace, segment, "ass", "", attempt.id + 1)
-            return None
-        width, height = fixture_dimensions(workspace.root / segment["video_path"])
-        ass = render_combined_ass(cues, comments, segment["duration_ms"], width, height)
-        publish_subtitle_revision(
-            database,
-            workspace,
-            segment,
-            "ass",
-            ass.text if ass.dialogue_count else "",
-            attempt.id + 1,
-        )
-    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError):
-        return "ass_publication_failed"
-    return "ass_partial" if segment["comment_state"] != "completed" or ass.omitted_comments else None
-
-
-def retry_failed_speech(workspace: FixtureWorkspace) -> tuple[list[SpeechAttempt], list[int]]:
+def retry_failed_speech(workspace: Workspace) -> tuple[list[SpeechAttempt], list[int]]:
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         ensure_speech_schema(database)
         candidates = database.execute("""
@@ -419,7 +393,7 @@ def retry_failed_speech(workspace: FixtureWorkspace) -> tuple[list[SpeechAttempt
             for candidate in candidates:
                 segment_id = candidate["segment_id"]
                 try:
-                    segment = _verified_segment(database, workspace, segment_id)
+                    segment = verified_segment(database, workspace, segment_id)
                 except ValueError:
                     skipped.append(segment_id)
                     continue

@@ -26,6 +26,11 @@ dependencies = [
 # コアの初期同期では speech extra をインストールしない。音声実装段階で追加する。
 [project.optional-dependencies]
 speech = ["faster-whisper>=1.1,<2"]
+speech-cuda = [
+    "faster-whisper>=1.1,<2",
+    "nvidia-cublas-cu12>=12,<13; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [project.scripts]
 live-rec-lab = "live_rec_lab.cli:main"

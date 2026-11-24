@@ -6,22 +6,30 @@ import signal
 import sqlite3
 import sys
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
+from .application import ApplicationWorkspace
+from .ass_jobs import process_ass, public_ass_attempt
+from .budget import LivePermission
 from .collection import FIXTURE_STREAMS, run_fixture
+from .diagnosis import diagnose_application
 from .endpoint import fixture_status, stop_fixture
 from .isolation import FixtureWorkspace
 from .maintenance import expire_fixture_comments, inspect_fixture_restore
 from .postprocess import postprocess_fixture
+from .providers.target import normalize_target
 from .restoration import finish_fixture_restore, prepare_fixture_restore
-from .runtime import backup_fixture, diagnose_fixture, serve_fixture
+from .runtime import backup_fixture, diagnose_fixture, serve_fixture, serve_workspace, snapshot_fixture_database
 from .speech_jobs import enqueue_speech, process_speech, public_attempt, speech_attempts
-from .web_port import read_web_port, save_web_port
+from .web_port import read_web_port, save_web_port, validate_web_port
+from .workers import RuntimeWorkers
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="live-rec-lab")
     commands = parser.add_subparsers(dest="command", required=True)
+    _application_parsers(commands)
     fixture = commands.add_parser("fixture", help="run a synthetic recording in a private /tmp workspace")
     fixture_actions = fixture.add_subparsers(dest="action", required=True)
     fixture_actions.add_parser("init").add_argument("root", type=Path)
@@ -68,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
     fixture_actions.add_parser("speech-status").add_argument("root", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command != "fixture":
+            return _application_command(args)
         if args.action == "init":
             workspace = FixtureWorkspace.initialize(args.root)
             result = {"mode": "fixture", "root": str(workspace.root)}
@@ -114,6 +124,10 @@ def main(argv: list[str] | None = None) -> int:
                 case "speech-work":
                     completed = _speech_work(workspace, args.automatic)
                     result = public_attempt(completed) if completed else {"state": "idle"}
+                    if completed and completed.state in {"completed", "no_speech"}:
+                        combined = process_ass(workspace, automatic=False)
+                        if combined:
+                            result["ass"] = public_ass_attempt(combined)
                 case "speech-status":
                     result = {"items": [public_attempt(attempt) for attempt in speech_attempts(workspace)]}
     except KeyboardInterrupt:
@@ -125,6 +139,121 @@ def main(argv: list[str] | None = None) -> int:
     if args.action in {"restore-prepare", "restore-finish"} and result["state"] == "blocked":
         return 1
     return 0
+
+
+def _application_parsers(commands) -> None:
+    for name in (
+        "start",
+        "status",
+        "url",
+        "stop",
+        "diagnose",
+        "backup",
+        "config",
+        "restore-check",
+        "restore-prepare",
+        "restore-finish",
+    ):
+        command = commands.add_parser(name)
+        command.add_argument("--dev", action="store_true", help="select the isolated developer workspace")
+        if name == "start":
+            command.add_argument("--allow-live", action="store_true")
+            command.add_argument("--target", action="append", default=[], metavar="SERVICE:ACCOUNT")
+            command.add_argument("--until", metavar="ISO-8601")
+        elif name == "diagnose":
+            command.add_argument("--json", action="store_true")
+        elif name == "backup":
+            command.add_argument("destination", type=Path, nargs="?")
+        elif name == "config":
+            command.add_argument("operation", choices=["get", "set"])
+            command.add_argument("key", choices=["web_port"])
+            command.add_argument("value", type=int, nargs="?")
+        elif name in {"restore-check", "restore-prepare"}:
+            command.add_argument("snapshot")
+
+
+def _live_permissions(args) -> tuple[LivePermission, ...]:
+    if not (args.allow_live or args.target or args.until):
+        return ()
+    if not args.dev or not args.allow_live or not args.target or not args.until:
+        raise ValueError("isolated live tests require --dev, --allow-live, --target and --until")
+    expires = datetime.fromisoformat(args.until)
+    if expires.utcoffset() is None or expires <= datetime.now(UTC):
+        raise ValueError("live permission needs an unexpired deadline with time zone")
+    permissions = []
+    for target in args.target:
+        service, divider, identity = target.partition(":")
+        if not divider or service not in {"tiktok", "twitcasting"}:
+            raise ValueError("target needs a recognized service and account")
+        account = normalize_target(service, identity)
+        permissions.append(LivePermission(service, account, frozenset({"detect", "comments"}), expires))
+    return tuple(permissions)
+
+
+def _application_command(args) -> int:
+    workspace = ApplicationWorkspace.resolve("developer" if args.dev else "normal")
+    if args.command == "diagnose":
+        result = diagnose_application(workspace)
+        print(json.dumps(result, ensure_ascii=False))
+        return {"ok": 0, "partial": 1, "unavailable": 2, "target_mismatch": 3}[result["status"]]
+    if args.command == "start":
+        permissions = _live_permissions(args)
+        workspace.initialize()
+        serve_workspace(workspace, workers=RuntimeWorkers(workspace, permissions=permissions))
+        return 0
+    if args.command == "config" and args.operation == "set":
+        if args.value is None:
+            raise ValueError("config set requires a port")
+        validate_web_port(args.value)
+        workspace.initialize()
+    if args.command == "config" and args.operation == "get" and args.value is not None:
+        raise ValueError("config get does not accept a value")
+    if args.command in {"status", "url", "stop", "config"} and not (
+        workspace.database.exists() or workspace.state.exists()
+    ):
+        if args.command == "url":
+            raise ValueError("server URL is unavailable")
+        result = (
+            {"web_port": workspace.default_port, "revision": 0}
+            if args.command == "config"
+            else {"mode": workspace.mode, "state": "stopped", "configured_port": workspace.default_port}
+        )
+    else:
+        workspace.recheck()
+        match args.command:
+            case "status":
+                result = fixture_status(workspace)
+            case "url":
+                status = fixture_status(workspace)
+                if status["state"] != "running":
+                    raise ValueError("server URL is unavailable")
+                print(status["url"])
+                return 0
+            case "stop":
+                result = stop_fixture(workspace)
+            case "config":
+                if args.operation == "get":
+                    result = asdict(read_web_port(workspace))
+                else:
+                    with workspace.exclusive(worker="server"):
+                        result = asdict(save_web_port(workspace, args.value))
+            case "backup":
+                if args.destination is None:
+                    snapshot = backup_fixture(workspace)
+                else:
+                    destination = args.destination.absolute()
+                    with workspace.exclusive():
+                        workspace.check_backup_destination(destination)
+                        snapshot = snapshot_fixture_database(workspace, destination)
+                result = {"mode": workspace.mode, "snapshot": str(snapshot)}
+            case "restore-check":
+                result = inspect_fixture_restore(workspace, args.snapshot)
+            case "restore-prepare":
+                result = prepare_fixture_restore(workspace, args.snapshot)
+            case "restore-finish":
+                result = finish_fixture_restore(workspace)
+    print(json.dumps(result, ensure_ascii=False))
+    return int(result.get("state") == "blocked")
 
 
 def _speech_work(workspace: FixtureWorkspace, automatic: bool):

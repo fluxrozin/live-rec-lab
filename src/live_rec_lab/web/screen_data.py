@@ -4,23 +4,51 @@ import json
 import os
 import re
 import sqlite3
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ..isolation import FixtureWorkspace
+from ..ass_jobs import latest_ass
+from ..isolation import Workspace, redact_log_text
 from ..publication import matches_media
+from ..retention import media_deletion_status
 from ..speech_jobs import latest_speech, published_speech_uses_job
-from .queries import session_select
+from .queries import like_pattern, page_rows, session_select
 
 _TIME_RANGE = re.compile(r"(\d{2,}:\d{2}:\d{2},\d{3}) --> (\d{2,}:\d{2}:\d{2},\d{3})")
-_SECRET = re.compile(
-    r"(?i)(\b(?:authorization|cookie|token|client_secret|api[-_ ]?key|sign_api_key)\s*[:=]\s*)([^\r\n]+)"
-)
-_URL = re.compile(r"https?://[^\s]+")
+SPEECH_JOB_STATES = {
+    "not_started": "未投入",
+    "queued": "待機",
+    "running": "処理中",
+    "completed": "完了",
+    "no_speech": "発話なし",
+    "not_applicable": "音声なし",
+    "blocked": "保留",
+    "failed": "失敗",
+    "needs_review": "要確認",
+    "interrupted": "中断",
+    "deleted": "削除済み",
+}
+ASS_JOB_STATES = {
+    "not_started": "未投入",
+    "queued": "待機",
+    "running": "生成中",
+    "completed": "完了",
+    "provisional": "暫定",
+    "partial": "片側または欠損あり",
+    "skipped": "対象なし",
+    "blocked": "保留",
+    "failed": "失敗",
+    "needs_review": "要確認",
+    "interrupted": "中断",
+    "expired": "期限削除済み",
+    "deleted": "削除済み",
+}
 _STATES = {
     "stream": {
         "live": ("配信中", "live"),
+        "ending": ("終了処理中", "warning"),
         "ended": ("終了", "neutral"),
         "offline": ("オフライン", "neutral"),
         "interrupted": ("中断", "warning"),
@@ -29,6 +57,10 @@ _STATES = {
     "recording": {
         "running": ("録画中", "recording"),
         "completed": ("保存済み", "live"),
+        "partial": ("一部保存", "warning"),
+        "cancelled": ("停止済み", "neutral"),
+        "deleted": ("削除済み", "neutral"),
+        "blocked": ("保留", "warning"),
         "pending": ("待機", "neutral"),
         "failed": ("録画失敗", "danger"),
         "needs_review": ("要確認", "warning"),
@@ -42,11 +74,18 @@ _STATES = {
         "failed": ("収集失敗", "danger"),
         "interrupted": ("中断", "warning"),
         "partial": ("一部取得", "warning"),
+        "blocked": ("保留", "warning"),
+        "disabled": ("無効", "neutral"),
         "not_started": ("未収集", "neutral"),
         "expired": ("期限削除済み", "neutral"),
     },
     "subtitle": {
         "completed": ("保存済み", "live"),
+        "queued": ("待機", "neutral"),
+        "running": ("生成中", "comment"),
+        "interrupted": ("中断", "warning"),
+        "provisional": ("暫定版", "warning"),
+        "deleted": ("削除済み", "neutral"),
         "pending": ("待機", "neutral"),
         "failed": ("生成失敗", "danger"),
         "partial": ("一部取得", "warning"),
@@ -98,12 +137,13 @@ def active_snapshot(database: sqlite3.Connection) -> dict:
         FROM stream_sessions
     """).fetchone()
     running = database.execute(
-        session_select + " WHERE stream_state = 'live' ORDER BY started_at DESC, stream_sessions.id DESC LIMIT 25"
+        session_select
+        + " WHERE stream_state IN ('live', 'ending') ORDER BY started_at DESC, stream_sessions.id DESC LIMIT 25"
     ).fetchall()
     return {"counts": counts, "running": running, "now": datetime.now(UTC).isoformat()}
 
 
-def disk_summary(workspace: FixtureWorkspace) -> tuple[int | None, int | None]:
+def disk_summary(workspace: Workspace) -> tuple[int | None, int | None]:
     try:
         volume = os.statvfs(workspace.recordings)
         return volume.f_bavail * volume.f_frsize, volume.f_blocks * volume.f_frsize
@@ -111,21 +151,30 @@ def disk_summary(workspace: FixtureWorkspace) -> tuple[int | None, int | None]:
         return None, None
 
 
-def verified_outputs(database: sqlite3.Connection, workspace: FixtureWorkspace, session_id: int) -> list[dict]:
+def verified_outputs(
+    database: sqlite3.Connection,
+    workspace: Workspace,
+    session_id: int,
+    *,
+    segment_id: int | None = None,
+) -> list[dict]:
     segments = database.execute(
-        "SELECT * FROM recording_segments WHERE session_id = ? ORDER BY number", (session_id,)
+        "SELECT * FROM recording_segments WHERE session_id = ? AND (? IS NULL OR id = ?) ORDER BY number",
+        (session_id, segment_id, segment_id),
     ).fetchall()
     expiration = database.execute(
         "SELECT state FROM comment_expirations WHERE session_id = ?", (session_id,)
     ).fetchone()
+    deletion = media_deletion_status(database, session_id)
     results = []
     for segment in segments:
-        available = matches_media(workspace, segment["video_path"], segment["video_generation"])
+        available = not deletion and matches_media(workspace, segment["video_path"], segment["video_generation"])
         publications = database.execute(
             "SELECT * FROM subtitle_publications WHERE segment_id = ?", (segment["id"],)
         ).fetchall()
         statuses = {}
         speech_origin = None
+        ass_attempt = latest_ass(database, segment["id"])
         for record in publications:
             if record["kind"] == "speech":
                 speech_origin = (
@@ -138,9 +187,23 @@ def verified_outputs(database: sqlite3.Connection, workspace: FixtureWorkspace, 
                 if available and matches_media(workspace, record["relative_path"], record["file_generation"])
                 else "needs_review"
             )
+            if (
+                record["kind"] == "ass"
+                and statuses["ass"] == "completed"
+                and ass_attempt
+                and ass_attempt.id == record["input_version"]
+                and ass_attempt.state in {"partial", "provisional"}
+            ):
+                statuses["ass"] = ass_attempt.state
         if expiration:
             statuses.update(
                 dict.fromkeys(("comment", "ass"), "expired" if expiration["state"] == "expired" else "blocked")
+            )
+        if deletion:
+            statuses.update(
+                dict.fromkeys(
+                    ("comment", "speech", "ass"), "deleted" if deletion["state"] == "completed" else "blocked"
+                )
             )
         results.append(
             {
@@ -152,18 +215,79 @@ def verified_outputs(database: sqlite3.Connection, workspace: FixtureWorkspace, 
                 "statuses": statuses,
                 "speech_origin": speech_origin,
                 "speech_attempt": latest_speech(database, segment["id"]),
+                "ass_attempt": ass_attempt,
             }
         )
     return results
 
 
+def speech_queue_page(
+    database: sqlite3.Connection,
+    workspace: Workspace,
+    *,
+    platform: str,
+    term: str,
+    session_id: int | None,
+    speech_state: str,
+    ass_state: str,
+    page: int,
+    page_size: int,
+) -> dict:
+    tables = {
+        row[0]
+        for row in database.execute("SELECT name FROM sqlite_master WHERE name IN ('speech_attempts','ass_attempts')")
+    }
+
+    def latest(table: str) -> str:
+        if table not in tables:
+            return "'not_started'"
+        select = f"SELECT state FROM {table} WHERE segment_id = segment.id ORDER BY id DESC LIMIT 1"
+        return f"coalesce(({select}), 'not_started')"
+
+    base = f"""
+    SELECT session.*, segment.id AS segment_id,
+        CASE WHEN session.recording_state = 'deleted' THEN 'deleted'
+             ELSE {latest("speech_attempts")} END AS speech_state,
+        CASE WHEN session.recording_state = 'deleted' THEN 'deleted'
+             WHEN expiration.state = 'expired' THEN 'expired'
+             WHEN expiration.state IS NOT NULL THEN 'blocked'
+             ELSE {latest("ass_attempts")} END AS ass_state
+    FROM ({session_select}) session
+    JOIN recording_segments segment ON segment.session_id = session.id
+    LEFT JOIN comment_expirations expiration ON expiration.session_id = session.id
+    WHERE (? = '' OR platform = ?) AND (? IS NULL OR session.id = ?)
+      AND (? = '' OR title LIKE ? ESCAPE '!' OR normalized_id LIKE ? ESCAPE '!' OR display_name LIKE ? ESCAPE '!')
+    """
+    search = like_pattern(term)
+    filters = (platform, platform, session_id, session_id, term, search, search, search)
+    counts = {"speech": {}, "ass": {}}
+    for row in database.execute(
+        f"SELECT speech_state, ass_state, count(*) FROM ({base}) GROUP BY speech_state, ass_state", filters
+    ):
+        for category, state in zip(counts, row[:2], strict=True):
+            counts[category][state] = counts[category].get(state, 0) + row[2]
+    result = page_rows(
+        database,
+        f"SELECT * FROM ({base}) WHERE (? = '' OR speech_state = ?) AND (? = '' OR ass_state = ?)",
+        (*filters, speech_state, speech_state, ass_state, ass_state),
+        "started_at DESC, id DESC, segment_id",
+        page,
+        page_size,
+    )
+    for row in result["items"]:
+        (row["segment"],) = verified_outputs(database, workspace, row["id"], segment_id=row["segment_id"])
+    return {**result, "counts": counts}
+
+
 def speech_cues(
     database: sqlite3.Connection,
-    workspace: FixtureWorkspace,
+    workspace: Workspace,
     session_id: int | None,
     term: str,
     page: int,
     order: str,
+    *,
+    segment_id: int | None = None,
 ) -> tuple[list[dict], bool, bool]:
     order_sql = "ASC" if order == "asc" else "DESC"
     rows = database.execute(
@@ -173,16 +297,18 @@ def speech_cues(
         FROM subtitle_publications
         JOIN recording_segments segment ON segment.id = subtitle_publications.segment_id
         JOIN stream_sessions session ON session.id = segment.session_id
-        WHERE kind = 'speech' AND (? IS NULL OR session.id = ?)
+        WHERE kind = 'speech' AND (? IS NULL OR session.id = ?) AND (? IS NULL OR segment.id = ?)
         ORDER BY session.started_at {order_sql}, session.id {order_sql}, segment.number {order_sql}
     """,
-        (session_id, session_id),
+        (session_id, session_id, segment_id, segment_id),
     )
     results = []
     unavailable = False
     matched = 0
     start = (page - 1) * 25
     for row in rows:
+        if media_deletion_status(database, row["session_id"]):
+            continue
         if not (
             matches_media(workspace, row["video_path"], row["video_generation"])
             and matches_media(workspace, row["relative_path"], row["file_generation"])
@@ -190,7 +316,7 @@ def speech_cues(
             unavailable = True
             continue
         try:
-            fd = os.open(workspace.root / row["relative_path"], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = os.open(workspace.media_path(row["relative_path"]), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, encoding="utf-8") as source:
                 content = source.read(2_000_001)
         except (OSError, UnicodeError):
@@ -224,24 +350,41 @@ def speech_cues(
     return results, False, unavailable
 
 
-def fixture_events(workspace: FixtureWorkspace) -> tuple[list[dict], str]:
-    FixtureWorkspace.open(workspace.root)
-    try:
-        fd = os.open(workspace.events, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return [], "empty"
-    except OSError:
-        return [], "unavailable"
-    with os.fdopen(fd, "rb") as source:
-        size = source.seek(0, os.SEEK_END)
-        skipped = max(0, size - 512_000)
-        source.seek(skipped)
-        records = source.read(512_000).splitlines()
-        if skipped:
-            records = records[1:]
+def fixture_events(workspace: Workspace) -> tuple[list[dict], str]:
+    workspace.recheck()
+    records = []
+    unreadable = False
+    state = "available"
+    remaining = 512_000
+    logs = [workspace.events, *(workspace.events.with_name(f"{workspace.events.name}.{i}") for i in range(1, 5))]
+    for path in logs:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as source:
+                info = os.fstat(fd)
+                if not (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()):
+                    unreadable = True
+                    continue
+                if remaining == 0:
+                    state = "partial"
+                    continue
+                size = source.seek(0, os.SEEK_END)
+                skipped = max(0, size - remaining)
+                source.seek(skipped)
+                window = source.read(remaining)
+                remaining -= len(window)
+                lines = window.splitlines()
+                records.extend(reversed(lines[1:] if skipped else lines))
+                if skipped:
+                    state = "partial"
+        except FileNotFoundError:
+            continue
+        except OSError:
+            unreadable = True
+    if unreadable:
+        state = "partial" if records else "unavailable"
     results = []
-    state = "partial" if skipped else "available"
-    for line in reversed(records):
+    for line in records:
         try:
             entry = json.loads(line)
         except (ValueError, UnicodeError):
@@ -253,13 +396,6 @@ def fixture_events(workspace: FixtureWorkspace) -> tuple[list[dict], str]:
         item = {key: str(entry.get(key, "")) for key in ("timestamp", "component", "event", "correlation_id")}
         exception = entry.get("exception")
         item["level"] = str(entry.get("level") or ("ERROR" if exception else "記録"))
-        item["detail"] = _URL.sub(
-            "［URL省略］",
-            _SECRET.sub(
-                r"\1［秘匿］",
-                str(exception.get("message", "") if isinstance(exception, dict) else entry.get("message", "")),
-            ),
-        )
-        item = {key: (_SECRET.sub(r"\1［秘匿］", value) if key != "detail" else value) for key, value in item.items()}
-        results.append(item)
-    return results, state
+        item["detail"] = str(exception.get("message", "") if isinstance(exception, dict) else entry.get("message", ""))
+        results.append({key: redact_log_text(value) for key, value in item.items()})
+    return results, state if results or state != "available" else "empty"

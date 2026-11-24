@@ -3,107 +3,25 @@
 import re
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 
 from .collection import FIXTURE_STREAMS, find_fixture_session
 from .db import connect
-from .isolation import FixtureWorkspace, check_fixture_directory
+from .isolation import FixtureWorkspace, IsolationError, Workspace
 from .media import generation
-from .publication import has_prepared_ass, matches_media
+from .publication import matches_media
+from .retention import expire_session_comments
 
 
 def expire_fixture_comments(workspace: FixtureWorkspace, platform: str) -> dict[str, object]:
+    if workspace.mode != "fixture":
+        raise IsolationError("fixture expiration requires a fixture workspace")
     stream = FIXTURE_STREAMS[platform]
     with workspace.exclusive(), closing(connect(workspace.database)) as database:
         session = find_fixture_session(database, stream)
-        if not session or session["stream_state"] != "ended":
+        if session is None:
             raise ValueError("expiration requires an ended fixture session")
-        session_id = session["id"]
-        if has_prepared_ass(database, session_id):
-            raise ValueError("pending ASS publication requires reconciliation")
-        operation = database.execute("SELECT * FROM comment_expirations WHERE session_id = ?", (session_id,)).fetchone()
-        if operation is not None and operation["state"] == "expired":
-            return _result(operation["removed_comments"])
-        with database:
-            database.execute(
-                """
-                INSERT INTO comment_expirations (session_id, state, started_at) VALUES (?, 'running', ?)
-                ON CONFLICT(session_id) DO UPDATE SET state = 'running'
-                """,
-                (session_id, datetime.now(UTC).isoformat()),
-            )
-
-        try:
-            _remove_comment_media(database, workspace, session_id)
-        except (OSError, ValueError) as error:
-            with database:
-                database.execute(
-                    "UPDATE comment_expirations SET state = 'needs_review' WHERE session_id = ?", (session_id,)
-                )
-            workspace.event("retention", "needs_review", stream.source_id, error)
-            raise
-
-        with database:
-            removed = database.execute("DELETE FROM comments WHERE session_id = ?", (session_id,)).rowcount
-            database.execute(
-                """
-                DELETE FROM subtitle_publications WHERE kind IN ('comment', 'ass') AND segment_id IN
-                (SELECT id FROM recording_segments WHERE session_id = ?)
-                """,
-                (session_id,),
-            )
-            database.execute(
-                "UPDATE stream_sessions SET comment_state = 'expired', subtitle_state = 'expired' WHERE id = ?",
-                (session_id,),
-            )
-            database.execute(
-                """
-                UPDATE comment_expirations SET state = 'expired', completed_at = ?, removed_comments = ?
-                WHERE session_id = ?
-                """,
-                (datetime.now(UTC).isoformat(), removed, session_id),
-            )
-        workspace.event("retention", "expired", stream.source_id)
-        return _result(removed)
-
-
-def _remove_comment_media(database: sqlite3.Connection, workspace: FixtureWorkspace, session_id: int) -> None:
-    targets: list[tuple[Path, str]] = []
-    segments = database.execute("SELECT * FROM recording_segments WHERE session_id = ?", (session_id,)).fetchall()
-    recording_state = database.execute(
-        "SELECT recording_state FROM stream_sessions WHERE id = ?", (session_id,)
-    ).fetchone()[0]
-    if recording_state == "needs_review" or (recording_state == "completed" and not segments):
-        raise ValueError("recording publication could not be verified for comment expiration")
-    for segment in segments:
-        if not matches_media(workspace, segment["video_path"], segment["video_generation"]):
-            raise ValueError("video generation could not be verified")
-        video = Path(segment["video_path"])
-        for kind, filename in (("comment", video.stem + "_comment.srt"), ("ass", video.stem + ".ass")):
-            relative = video.with_name(filename)
-            stored = database.execute(
-                "SELECT relative_path, file_generation FROM subtitle_publications WHERE segment_id = ? AND kind = ?",
-                (segment["id"], kind),
-            ).fetchone()
-            if stored and stored["relative_path"] != str(relative):
-                raise ValueError("subtitle location could not be verified")
-            candidate = workspace.root / relative
-            try:
-                candidate.lstat()
-            except FileNotFoundError:
-                continue
-            if not stored or not matches_media(workspace, str(relative), stored["file_generation"]):
-                raise ValueError("subtitle generation could not be verified")
-            targets.append((relative, stored["file_generation"]))
-    for relative, expected in targets:
-        if not matches_media(workspace, str(relative), expected):
-            raise ValueError("subtitle generation changed before expiration")
-        (workspace.root / relative).unlink()
-
-
-def _result(removed: int) -> dict[str, object]:
-    return {"mode": "fixture", "state": "expired", "removed_comments": removed}
+    return expire_session_comments(workspace, session["id"])
 
 
 _BACKUP_NAME = re.compile(r"fixture-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}\.sqlite3\Z")
@@ -122,6 +40,16 @@ _RESTORE_PROTECTED_TABLES = (
     "comment_checkpoints",
     "comment_provider_attributes",
     "subtitle_revision_operations",
+    "media_deletion_operations",
+    "media_deletion_targets",
+    "session_settlements",
+    "provider_monitor_state",
+    "provider_media_folders",
+    "provider_recording_attempts",
+    "provider_recording_segments",
+    "provider_recording_failures",
+    "provider_recording_names",
+    "ass_attempts",
 )
 _RESTORE_COUNTS = {
     "conflicting_session_identity": """
@@ -174,9 +102,9 @@ _RESTORE_COUNTS = {
 }
 
 
-def inspect_fixture_restore(workspace: FixtureWorkspace, snapshot_name: str) -> dict[str, object]:
+def inspect_fixture_restore(workspace: Workspace, snapshot_name: str) -> dict[str, object]:
     """Check a backup against the isolated workspace with two read-only schemas."""
-    workspace = FixtureWorkspace.open(workspace.root)
+    workspace = workspace.recheck()
     workspace.require_ready()
     candidate = fixture_backup_path(workspace, snapshot_name)
     issues = check_fixture_restore(workspace, workspace.database, candidate)
@@ -188,13 +116,13 @@ def inspect_fixture_restore(workspace: FixtureWorkspace, snapshot_name: str) -> 
     }
 
 
-def fixture_backup_path(workspace: FixtureWorkspace, snapshot_name: str) -> Path:
+def fixture_backup_path(workspace: Workspace, snapshot_name: str) -> Path:
     directory = workspace.events.parent / "backups"
     if not _BACKUP_NAME.fullmatch(snapshot_name):
         raise ValueError("invalid fixture backup name")
     candidate = directory / snapshot_name
     try:
-        check_fixture_directory(directory, private=True)
+        workspace.check_directory(directory, private=True)
         generation(candidate)
     except (OSError, ValueError) as error:
         raise ValueError("fixture backup is not a verified owned file") from error
@@ -202,7 +130,7 @@ def fixture_backup_path(workspace: FixtureWorkspace, snapshot_name: str) -> Path
 
 
 def check_fixture_restore(
-    workspace: FixtureWorkspace, current: Path, candidate: Path, *, immutable_current: bool = False
+    workspace: Workspace, current: Path, candidate: Path, *, immutable_current: bool = False
 ) -> dict[str, int]:
     original_generation = generation(candidate)
     uri = current.as_uri() + ("?mode=ro&immutable=1" if immutable_current else "?mode=ro")
@@ -225,6 +153,7 @@ def check_fixture_restore(
                 issues["failed_integrity_check"] = 1
             else:
                 issues.update(_changed_protected_tables(database, tables))
+                deleted = _deleted_media_in_candidate(database, tables)
                 for issue, statement in _RESTORE_COUNTS.items():
                     count = database.execute(statement).fetchone()[0]
                     if count:
@@ -240,7 +169,7 @@ def check_fixture_restore(
                     ),
                 ):
                     total = sum(
-                        not matches_media(workspace, path, file_generation)
+                        (path, file_generation) not in deleted and not matches_media(workspace, path, file_generation)
                         for path, file_generation in database.execute(statement)
                     )
                     if total:
@@ -254,13 +183,33 @@ def check_fixture_restore(
     return issues
 
 
+def _deleted_media_in_candidate(database: sqlite3.Connection, tables: set[str]) -> set[tuple[str, str]]:
+    if not {"media_deletion_operations", "media_deletion_targets"} <= tables:
+        return set()
+    return set(
+        database.execute(
+            """
+        SELECT target.relative_path, target.file_generation
+        FROM candidate.media_deletion_targets AS target
+        JOIN candidate.media_deletion_operations AS operation ON operation.id = target.operation_id
+        WHERE target.state = 'removed' AND operation.state = 'completed'
+        """
+        )
+    )
+
+
 def _changed_protected_tables(database: sqlite3.Connection, candidate_tables: set[str]) -> dict[str, int]:
     current_tables = {row[0] for row in database.execute("SELECT name FROM main.sqlite_master WHERE type='table'")}
     issues = {}
     for table in _RESTORE_PROTECTED_TABLES:
         if table not in current_tables | candidate_tables:
             continue
-        if table not in current_tables & candidate_tables or any(
+        if table not in current_tables & candidate_tables:
+            issues[f"changed_{table}"] = 1
+            continue
+        current_columns = [column[1] for column in database.execute(f"PRAGMA main.table_info({table})")]
+        candidate_columns = [column[1] for column in database.execute(f"PRAGMA candidate.table_info({table})")]
+        if current_columns != candidate_columns or any(
             database.execute(f"SELECT * FROM {left}.{table} EXCEPT SELECT * FROM {right}.{table} LIMIT 1").fetchone()
             is not None
             for left, right in (("main", "candidate"), ("candidate", "main"))

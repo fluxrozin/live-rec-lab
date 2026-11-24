@@ -19,13 +19,13 @@ from .endpoint import (
     publish_endpoint,
     remove_endpoint,
 )
-from .isolation import FixtureWorkspace, check_fixture_directory
+from .isolation import FixtureWorkspace, Workspace
 from .media import media_tool, publish_exclusive
 from .web_port import read_web_port, validate_web_port
 
 
-def diagnose_fixture(workspace: FixtureWorkspace) -> dict[str, object]:
-    workspace = FixtureWorkspace.open(workspace.root)
+def diagnose_fixture(workspace: Workspace) -> dict[str, object]:
+    workspace = workspace.recheck()
     database_state: dict[str, object] = {"integrity": "unconfirmed", "reason": "restore_in_progress"}
     if not workspace.restore_pending:
         with closing(sqlite3.connect(workspace.database.as_uri() + "?mode=ro", uri=True)) as database:
@@ -41,7 +41,7 @@ def diagnose_fixture(workspace: FixtureWorkspace) -> dict[str, object]:
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             tools[name] = {"state": "unavailable", "reason": str(error)}
     return {
-        "mode": "fixture",
+        "mode": workspace.mode,
         "database": database_state,
         "tools": tools,
         "runtime": fixture_status(workspace),
@@ -50,19 +50,20 @@ def diagnose_fixture(workspace: FixtureWorkspace) -> dict[str, object]:
     }
 
 
-def backup_fixture(workspace: FixtureWorkspace) -> Path:
+def backup_fixture(workspace: Workspace) -> Path:
     with workspace.exclusive():
         return snapshot_fixture_database(workspace)
 
 
-def snapshot_fixture_database(workspace: FixtureWorkspace) -> Path:
+def snapshot_fixture_database(workspace: Workspace, destination: Path | None = None) -> Path:
     """Save an Online Backup while the caller holds the workspace writer lock."""
-    workspace = FixtureWorkspace.open(workspace.root)
-    backups = workspace.events.parent / "backups"
-    backups.mkdir(mode=0o700, exist_ok=True)
-    check_fixture_directory(backups, private=True)
+    workspace = workspace.recheck()
+    backups = workspace.backup_path if destination is None else destination.parent
+    if destination is None:
+        backups.mkdir(mode=0o700, exist_ok=True)
+    workspace.check_directory(backups, private=destination is None)
     filename = f"fixture-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid4().hex[:12]}.sqlite3"
-    destination = backups / filename
+    destination = backups / filename if destination is None else destination
     with tempfile.NamedTemporaryFile(dir=backups, suffix=".part.sqlite3", delete=False) as staging:
         temporary = Path(staging.name)
     try:
@@ -83,9 +84,15 @@ def snapshot_fixture_database(workspace: FixtureWorkspace) -> Path:
 
 
 def serve_fixture(workspace: FixtureWorkspace, port: int | None = None) -> None:
+    from .workers import RuntimeWorkers
+
+    serve_workspace(workspace, port, workers=RuntimeWorkers(workspace))
+
+
+def serve_workspace(workspace: Workspace, port: int | None = None, *, workers=None) -> None:
     import uvicorn
 
-    from .web.app import create_fixture_app
+    from .web.app import create_app
 
     with workspace.exclusive(worker="server"), socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         port = read_web_port(workspace).web_port if port is None else validate_web_port(port)
@@ -97,8 +104,8 @@ def serve_fixture(workspace: FixtureWorkspace, port: int | None = None) -> None:
         except OSError as error:
             raise OSError(f"could not bind fixture port {port}: {error}") from error
 
-        endpoint = Endpoint.current(port)
-        app = create_fixture_app(workspace, port)
+        endpoint = Endpoint.current(port, workspace.mode)
+        app = create_app(workspace, port)
         config = uvicorn.Config(
             app,
             host="127.0.0.1",
@@ -121,6 +128,8 @@ def serve_fixture(workspace: FixtureWorkspace, port: int | None = None) -> None:
                 )
                 publish_endpoint(workspace, endpoint)
                 print(endpoint.url, flush=True)
+                if workers is not None:
+                    workers.start()
 
             async def handle_control(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                 try:
@@ -140,6 +149,8 @@ def serve_fixture(workspace: FixtureWorkspace, port: int | None = None) -> None:
                     writer.close()
 
             async def shutdown(self, sockets=None):
+                if workers is not None:
+                    workers.signal_stop()
                 if self.control is not None:
                     self.control.close()
                     await self.control.wait_closed()
@@ -148,4 +159,6 @@ def serve_fixture(workspace: FixtureWorkspace, port: int | None = None) -> None:
         try:
             FixtureServer(config).run(sockets=[listener])
         finally:
+            if workers is not None:
+                workers.stop()
             remove_endpoint(workspace, endpoint)
