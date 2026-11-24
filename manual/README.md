@@ -16,7 +16,7 @@
 
 1. WindowsのPowerShellで `wsl -l -v` を実行し、UbuntuがWSLバージョン2で起動することを確認します。Ubuntu 24.04 LTSを基準とします。
 2. リポジトリをWSLのホーム配下に置き、作業ディレクトリをリポジトリのルートへ移します。一般ユーザーでPython 3.12、uv、FFmpegを準備します。実際の実行環境で `ffmpeg -version` と `ffprobe -version` を確認します。
-3. CPU音声認識は `uv sync --locked --extra speech`、CUDA音声認識は `uv sync --locked --extra speech-cuda` で依存を揃えます。`uv run` にも同じextraを指定します。資格情報を使う場合は `.env.example` を `.env` にコピーし、`chmod 600 .env` で保護してから値を記入します。
+3. CPU音声認識は `uv sync --locked --extra speech`、CUDA音声認識は `uv sync --locked --extra speech-cuda` で依存を揃えます。`uv run` にも同じextraを指定します。ツイキャスの資格情報を用意する場合は [API認証情報の取得と設定](#api-credentials) を参照してください。
 4. 録画する場合は専用のWindowsドライブを選びます。他の録画アプリケーションや別インスタンスの**現在の実効録画ルート**をそれぞれの設定から確認し、`LIVE_REC_LAB_EXISTING_RECORDING_ROOTS` に設定します。DBやログのディレクトリも別々にします。変数や設定の詳細は [設定](#configuration) を参照してください。
 5. 初回は既存アプリ・保護パス・実効保存先・ポートを確認し、WSL内で起動します。専用管理領域を確認し、未作成の場合は初期化します。
 
@@ -131,7 +131,7 @@ PowerShellで `scripts/register-startup.ps1` を実行します。WSLディス�
 | 環境変数                                             | 内容                                                                                                                                       |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `TWITCASTING_CLIENT_ID`、`TWITCASTING_CLIENT_SECRET` | 公式APIのHTTP Basic認証                                                                                                                    |
-| `SIGN_API_KEY`                                       | Euler Streamの署名API用。利用可能な場合に設定                                                                                              |
+| `SIGN_API_KEY`                                       | Euler Streamの署名API用。現行実装は設定値の読み込みまで                                                                                    |
 | `LIVE_REC_LAB_DATA_DIR`                              | SQLiteのディレクトリ。既定 `~/.local/share/live-rec-lab/data`                                                                              |
 | `LIVE_REC_LAB_STATE_DIR`                             | ログ・実行状態。既定 `~/.local/state/live-rec-lab`                                                                                         |
 | `LIVE_REC_LAB_RECORDING_ROOT`                        | DBに保存先が未登録の場合の録画ルート。未指定時の既定値は `/mnt/d/LiveRecorder`                                                             |
@@ -155,6 +155,50 @@ SQLiteの実ファイルはデータディレクトリの `app.sqlite3` です�
 ポートが使用中の場合は別ポートへ自動変更せず起動に失敗します。他のアプリケーションを停止せず、停止状態で `uv run --locked --extra speech live-rec-lab config get web_port` で設定を確認し、`uv run --locked --extra speech live-rec-lab config set web_port PORT`（PORTは有効な整数）を使い、再起動してください。別インスタンスを動かす場合は異なる固定ポートと専用のデータ・録画ルートを設定します。
 
 RESTで設定変更する場合は、`GET /api/v1/settings` の `revision` とレスポンスの `X-CSRF-Token` を取得してください。`PUT /api/v1/settings` のJSONに変更項目と `revision` を含め、同名のヘッダーにトークンを指定します。保存後の版が異なる場合は再取得が必要です。
+
+<a id="api-credentials"></a>
+
+### API認証情報の取得と設定
+
+#### ツイキャスの Client ID と Client Secret
+
+1. [ツイキャスの開発者ページ](https://twitcasting.tv/developer.php) を開き、アプリを管理するツイキャスアカウントでログインします。
+2. `Create New App` を選び、次の表を参考に入力して `Create` を押します。必須項目や入力形式は、ログイン後の画面に表示される案内に従ってください。[ツイキャス公式の登録案内](https://twitcasting.tv/indexapi.php?hl=ja)
+
+   | 項目         | LiveRecorder の入力例                                                    | 補足                                                                                                                                         |
+   | ------------ | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+   | Name         | `LiveRecorder`                                                           | 登録済みアプリの一覧で見分けやすい名前を付けます。                                                                                           |
+   | Description  | `ライブ配信の録画、配信中のコメントの収集、字幕の生成を自動で行います。` | 利用目的を記入します。                                                                                                                       |
+   | Callback URL | `http://localhost:8000/`                                                 | アプリ登録時に入力します。この URL は OAuth の戻り先で、LiveRecorder は HTTP Basic 認証で接続するため、この URL 用のサーバー起動は不要です。 |
+   | WebHook URL  | 空欄                                                                     | LiveRecorder は配信状態をポーリングで確認します。                                                                                            |
+   | Scope        | `Read only`（読み取り専用）                                              | 配信状態やコメントの取得に使います。                                                                                                         |
+
+3. 登録したアプリの詳細に表示される `ClientID` と `ClientSecret` を控えます。LiveRecorder は、この2つを使って公式APIへHTTP Basic認証を行います。設定する値は登録したアプリの認証情報です。[ツイキャス API v2 リファレンス](https://apiv2-doc.twitcasting.tv/)
+
+表の項目名とローカル URL の形式は、公開されている登録事例を参考にしています。[登録画面の項目例](https://moeanimetaro3.hatenablog.com/entry/2024/05/13/164009)、[localhost を使った登録例](https://qiita.com/T4phage25nm/items/5195b2ce400bd2f1a9a1)
+
+#### Euler Stream の API キー
+
+現行の LiveRecorder は `SIGN_API_KEY` の読み込みまで実装しています。キーの取得は署名連携の利用時まで保留できます。
+
+1. [Euler Stream の登録ページ](https://www.eulerstream.com/register) で無料アカウントを作成します。登録済みの場合は、そのアカウントでログインします。
+2. [ダッシュボード](https://www.eulerstream.com/dashboard) で新しい API キーを作成します。キーが表示されたら、その場で控えてください。値を確認できるのは発行時の一度だけです。[Euler Stream の公式クイックスタート](https://www.eulerstream.com/docs/api/quickstart)
+3. LiveRecorder では無料枠を使用します。適用される上限は公式案内で確認してください。[Euler Stream の API 利用制限](https://www.eulerstream.com/docs/api/rate-limits)
+
+#### LiveRecorder への設定
+
+1. WSL でリポジトリのルートへ移動します。初回は `cp -n .env.example .env` でテンプレートをコピーし、`chmod 600 .env` でアクセス権を所有者の読み書きに限定します。作成済みの `.env` はそのまま編集します。
+2. テキストエディターで該当行の先頭の `#` を外し、`=` の右側に発行された値を記入します。以下の右辺は置換用の例です。
+
+   ```dotenv
+   TWITCASTING_CLIENT_ID=YOUR_TWITCASTING_CLIENT_ID
+   TWITCASTING_CLIENT_SECRET=YOUR_TWITCASTING_CLIENT_SECRET
+   SIGN_API_KEY=YOUR_EULER_STREAM_API_KEY
+   ```
+
+3. `.env` を保存します。設定は次回起動時に読み込まれます。同名のプロセス環境変数がある場合は、そちらが優先されます。実際の値は `.env` に記入し、Git やチャットへの貼り付けは避けてください。
+
+隔離環境で使う場合は、[開発者モードの手順](#developer-mode) に従い、`.env.dev` に `DEV_TWITCASTING_CLIENT_ID`、`DEV_TWITCASTING_CLIENT_SECRET`、`DEV_SIGN_API_KEY` として設定してください。
 
 <a id="architecture"></a>
 
