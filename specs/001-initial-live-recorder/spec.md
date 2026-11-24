@@ -1,8 +1,11 @@
 # Feature Specification: LiveRecorder 初期版
 
-**Feature Branch**: `trial/full-sdd-02`  
-**Created**: 2026-11-24  
-**Status**: 実装対象  
+**Feature Branch**: `trial/full-sdd-02`
+
+**Created**: 2026-11-24
+
+**Status**: 実装済み。実機と公開配信の未検証は [traceability.md](traceability.md) を参照する。
+
 **Input**: [確定要件](../../requirements.md)・[UI仕様](../../docs/UI_UX.md)・[実行指示](../../docs/prompts/master.md)
 
 ## User Scenarios & Testing

@@ -1,15 +1,15 @@
 # 構成
 
-LiveRecorder は WSL2 内で Web、REST API、監視、ジョブ管理を動かします。CLIの `start` がループバックソケットを確保し、Uvicorn 1 workerへ渡します。録画には監督下の子プロセスを使います。
+LiveRecorder は WSL2 内で Web、REST API、監視、ジョブ管理を動かします。CLIの `start` がループバックソケットを確保し、Uvicorn 1 workerへ渡します。`status`、`url`、`backup`、`stop` は同じ実行時状態を参照します。録画には監督下の子プロセスを使います。
 
 | 領域 | 責務 |
 | --- | --- |
 | `platforms/`・`monitoring/` | TikTok・ツイキャスの応答とコメントを正規化し、サービスごとに監視枠を制御 |
 | `services/` | 配信の状態遷移、個別ジョブの開始・停止、削除台帳 |
 | `db/`・`alembic/` | SQLite WAL、外部キー、マイグレーション、検索 |
-| `storage.py`・`recording/` | 保存先の照合、Windows上のファイル名とセッション採番、録画・メディア検証・確定 |
+| `storage.py`・`recording/` | 保存先の照合、Windows上のファイル名とセッション採番、録画・メディア検証・確定。ツイキャスは初期HLSのプリロールと404後の再解決を扱い、公式監視が配信中なら同じジョブで再接続する |
 | `comments/` | SQLiteへの原文保存、セグメントごとのSRT生成と版数の照合 |
-| `web/` | 日本語の7画面とローカルJSON API。変更時のHost・Origin・CSRFを検証 |
+| `web/` | 日本語の7画面とローカルJSON API。HTML断片は `templates/partials/`。変更時のHost・Origin・CSRFを検証 |
 | `ops/` | 起動時の復旧、ログの記録と段階的読取、手動バックアップ |
 
 SQLiteとログ・実行状態はLinux側、録画と対応SRTはWindows側の専用ドライブに置きます。DBの保存済み設定を反映した実効録画ルートを、運用者が確認した他インスタンスのルートと照合します。フォルダ割当とセッション内の採番は永続化されます。確定ファイルの上書きを防ぎ、未確定ファイルと予約行を起動時に照合します。

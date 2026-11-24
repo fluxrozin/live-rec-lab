@@ -12,7 +12,7 @@ This extension delivers an opinionated, repeatable bug workflow that any AI codi
 
 The three stages communicate through three Markdown files in a single per-bug directory:
 
-```
+```text
 .specify/bugs/<slug>/
 ├── assessment.md   # written by speckit.bug.assess
 ├── fix.md          # written by speckit.bug.fix
@@ -22,7 +22,7 @@ The three stages communicate through three Markdown files in a single per-bug di
 ## Commands
 
 | Command | Description | Output |
-|---------|-------------|--------|
+| --- | --- | --- |
 | `speckit.bug.assess` | Triages a bug report (pasted text or URL) against the codebase. | `.specify/bugs/<slug>/assessment.md` |
 | `speckit.bug.fix` | Applies the remediation from the assessment. | `.specify/bugs/<slug>/fix.md` |
 | `speckit.bug.test` | Validates the fix and records the verification report. | `.specify/bugs/<slug>/test.md` |
@@ -80,7 +80,7 @@ specify extension enable bug
 This extension registers no hooks of its own. The three commands are always invoked explicitly by the user, but expose lifecycle events for other extensions:
 
 | Command | Before event | After event |
-|---------|--------------|-------------|
+| --- | --- | --- |
 | `speckit.bug.assess` | `before_bug_assess` | `after_bug_assess` |
 | `speckit.bug.fix` | `before_bug_fix` | `after_bug_fix` |
 | `speckit.bug.test` | `before_bug_test` | `after_bug_test` |

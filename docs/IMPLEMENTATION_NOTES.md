@@ -1,9 +1,14 @@
 # LiveRecorder 実装メモ — 試作で得られた経験知
 
-> **配置先**：`docs/IMPLEMENTATION_NOTES.md`  
-> **更新日**：2026-11-23  
-> **対象**：`live-rec-lab`（WSL2 / Python 3.12 / TikTok LIVE・ツイキャスの初期試作）  
+> **配置先**：`docs/IMPLEMENTATION_NOTES.md`
+>
+> **更新日**：2026-11-23
+>
+> **対象**：`live-rec-lab`（WSL2 / Python 3.12 / TikTok LIVE・ツイキャスの初期試作）
+>
 > **性格**：実装試行の観測・失敗・検証結果を保存する**参考資料**。要件の正本ではない。
+>
+> **現行実装との関係**：本書は2026-11-23の試作記録である。現行の動作は `src/live_rec_lab/`、`docs/ARCHITECTURE.md`、`docs/LIMITATIONS.md`、`specs/001-initial-live-recorder/traceability.md` を見る。ツイキャスのプリロールは `.specify/bugs/twitcasting-preroll-only/` と `recording/` の現行実装が、この記録より新しい。
 
 ## 1. この文書の読み方
 

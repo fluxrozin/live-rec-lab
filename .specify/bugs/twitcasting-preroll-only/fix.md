@@ -12,7 +12,7 @@
 ## Changes
 
 | File | Change | Notes |
-|------|--------|-------|
+| --- | --- | --- |
 | `src/live_rec_lab/recording/hls_playlist.py` | modified | 起点URLとメディアURLを保持し、404時は起点から再解決する。別のメディアやシーケンスの巻き戻りは次のFFmpeg入力で処理する。キュー、または不連続とメディア・初期化URIの組み合わせで識別できるプリロールを除く。 |
 | `src/live_rec_lab/recording/manager.py` | modified | 終了判断にHLSと公式監視の状態を使う。既存の同一Movie IDの再確認と再接続上限を適用し、既存の録画確定処理で取得済みメディアを保存する。HLS取得段階・HTTPステータス、プレイリスト進行、セグメント数、終了タグ、FFmpeg終了区分をURLを含めずに記録する。 |
 | `tests/test_recording.py` | added tests | 模擬HLS、実FFmpegのローカル録画、一時SQLiteによるジョブ確定を検証する。 |

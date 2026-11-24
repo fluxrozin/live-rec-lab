@@ -7,9 +7,8 @@
 初期のWebフロントエンドは**FastAPI + Jinja2 + HTMX + 軽量JavaScript**。React/Next.js/Vueの独立SPAやNodeビルドを必須にしない。`src/live_rec_lab/web/` 以下にテンプレート・CSS・JSを集約する。
 
 - `app.py`：FastAPI構築・lifespan・ルータ登録。
-- `web/pages.py`：ページHTMLを返す。
-- `web/partials.py`：必要時のみHTML断片を返す。
-- `web/api.py`：将来クライアントとも共有する `/api/v1` のREST境界。
+- `web/pages.py`：ページHTMLを返す。部分更新は `web/templates/partials/` を返す。
+- `web/api.py`：`/api/v1` のREST境界。契約は `specs/001-initial-live-recorder/contracts/` にある。
 - `services/`：UI、CLI、RESTの共通の業務操作。UI側がDBを直接変更しない。
 - HTMXの更新は入力中のフォーム、フォーカス、スクロール、検索条件を不必要に破壊しない。
 
@@ -58,7 +57,7 @@
 - ログインがなくても状態変更系リクエストにはCSRF・Origin/Host等の対策を適用し、GETで変更を実行しない。
 - 動画のブラウザ再生・ライブプレビュー・コメント同期再生・HLS配信は初期のUIに入れない。動画とSRTはWindows側の保存先で利用する。Web UIにダウンロード操作を設けず、APIでもファイル本体を返さない。
 - `/logs` は読み取り専用のHTML画面とする。既存に読取実装がなくても、構造化ログ・ローテーション済みログ・利用可能なイベント要約の読取・サーバー側検索・ページング・詳細表示は初期実装必須とする。ログ専用の公開APIは必須としない。記録済みの本文・トレースは**古いログ／例外文も含めサーバー応答前に再マスキング**し、一覧・詳細・コピーのすべてで秘匿処理後の非秘匿本文を省略せず表示する。空、検索結果0件、取得不能、古い情報、取得可能期間の制約を区別する。システム状態のメディア診断では、実際のプロセスから解決した `ffmpeg`／`ffprobe` の実体・対応・検証時刻を表示可能な範囲で示し、試作環境の固定パスやバージョンを正常条件にしない。
-- RESTと画面のHTTP契約は初期Featureの `contracts/` に**実装前に作成する**。現時点で契約ファイルが生成済みとは仮定しない。
+- RESTと画面のHTTP契約は `specs/001-initial-live-recorder/contracts/http.md` と `contracts/operations.md` にある。契約に無いファイル取得をUIから追加しない。
 
 ## 6. UIの横断的な受け入れ観点
 

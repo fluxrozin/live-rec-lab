@@ -15,7 +15,7 @@
 | 録画子終了 | PENDING → STARTING → RECORDING → FINALIZING → COMPLETED／PARTIAL／FAILED／CANCELLED。再試行時はRECONNECTINGからSTARTINGへ。 | 内部取消・手動停止・設定停止・配信終了を区別。子を回収し、一時ファイルを検査。 |
 | コメント接続 | PENDING → CONNECTING → COLLECTING。切断時はRECONNECTINGを経て再接続、終了時はCOMPLETED／PARTIAL／FAILED／DISABLED。 | 理由、受信・保存・失敗・欠損を記録。受信終了とDB書込完了を区別。 |
 
-### 削除・SRT・保存の契約
+## 削除・SRT・保存の契約
 
 - 削除要求は確定済みセッション、指定モードと明示確認を必須とし、進行中・未確定・復旧中なら競合を返す。操作が開始したら同じ操作を参照し、途中失敗の再試行は台帳と照合して処理する。DB更新前に対象ファイルの削除を確認する。
 - コメント期限削除は独立ジョブで収束後だけ。排他フラグ／台帳を先に記録し、収集・SRT再生成を停止して管理SRTを先に除去する。DB側で確定するまで未完了とする。詳細は [DM-08・DM-09](../data-model.md)。

@@ -20,7 +20,7 @@ Windows 11
 WSL2 Ubuntu 24.04 LTS       FastAPI + Uvicorn (single process, 1 worker)
   ├─ Web UI (Jinja2/HTMX) ─────┤
   ├─ REST /api/v1 ─────────────┤
-  ├─ CLI (start/status/url/backup)
+  ├─ CLI (start/status/url/backup/stop)
   ├─ services/ ── sessions/jobs coordination
   ├─ monitoring/ ── per-platform scheduler
   │                     ├─ TikTok adapter
@@ -44,15 +44,15 @@ WSL2 Ubuntu 24.04 LTS       FastAPI + Uvicorn (single process, 1 worker)
 
 ## 4. コンポーネント責務
 
-| 部品（予定位置） | 責務／境界 |
+| 部品（`src/live_rec_lab/`） | 責務／境界 |
 | --- | --- |
-| `cli.py`、`__main__.py` | start/status/url/backupコマンド。UIと同じサービス層を使用 |
+| `cli.py`、`__main__.py` | `start`／`status`／`url`／`backup`／`stop`。起動・停止とバックアップを扱い、画面の業務操作は行わない |
 | `app.py` | FastAPIの組立、ルータ登録、lifespan。ビジネスロジックを置かない |
-| `web/pages.py`、`web/api.py` | HTMLとREST `/api/v1` のアダプタ。DBへ直接業務操作を書かない |
-| `services/sessions.py`、`services/jobs.py` | セッションの一意性、ジョブの生成・停止・連携を調整 |
+| `web/pages.py`、`web/api.py`、`web/security.py` | HTML、REST `/api/v1`、変更時のHost・Origin・CSRF。HTML断片は `web/templates/partials/`。DBへ直接業務操作を書かない |
+| `services/sessions.py`、`services/jobs.py`、`services/retention.py`、`services/media_files.py` | セッションの一意性、ジョブの生成・停止・連携、期限削除、管理ファイルの照合 |
 | `platforms/` | サービス固有の認証・通信・イベント正規化 |
 | `monitoring/` | 独立したサービス別監視枠、巡回公平性、LIVE検出。HTTP／通信失敗と明示的OFFLINEを識別し、終了猶予の根拠を管理 |
-| `recording/` | 実績のある録画エンジン選択、子プロセス回収、再試行、確定後の実ファイル検証、セグメントの確定。ツイキャスHLSの本編判定は根拠を検証 |
+| `recording/` | 実績のある録画エンジン選択、子プロセス回収、再試行、確定後の実ファイル検証、セグメントの確定。ツイキャスは `hls_playlist.py` で初期HLSと404後の再解決を扱い、配信継続中は同じジョブで再接続する |
 | `comments/` | 受信タスクの寿命・例外・停止処理、収集・重複排除・永続化、録画セグメント別SRT出力／字幕対象なしのスキップ |
 | `storage.py` | Windows互換ファイル名、保存ルート、既存アプリとの実効ルート衝突検知、配信者ID→フォルダ安全名のサービス非依存マッピング、衝突防止（初回衝突時のセッション固定識別子・上書き禁止の排他確定）、パス対応を一元化。同一配信のファイル名は配信開始時刻を共有し、**保持する**セグメントの番号をジョブをまたいでセッション単位で進める。空の破棄試行では連番を消費しない |
 | `db/`、`ops/` | DBモデル・マイグレーション、コメント期限削除（SRT先行照合・操作台帳・再開）、既存構造化ログの検索／段階的読取、復旧、バックアップ |

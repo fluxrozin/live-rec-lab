@@ -41,13 +41,13 @@
 
 録画終了の判断にツイキャス側のプレイリスト状態を伝える。配信が継続し本編取得の根拠がない場合は、FFmpegの終了やファイルの有効性だけでジョブを成功確定せず、再取得を試みる。復旧できない場合は取得済みデータを保全し、プレイリスト取得失敗と本編の欠損をジョブに残す。診断には取得段階、HTTPステータス、更新有無、セグメント数、`ENDLIST` の有無、プロセス終了区分を使う。
 
-**Files likely to change**
+### Files likely to change
 
 - `src/live_rec_lab/recording/hls_playlist.py`
 - `src/live_rec_lab/recording/manager.py`
 - `tests/test_recording.py`
 
-**Tests to add or update**
+### Tests to add or update
 
 - 識別情報のない6秒の初期リスト、選択先の404、公式起点での本編用バリアントへの切替を順に返し、本編を取得して確定することを確認する。
 - 配信が継続している間の短い録画での正常終了を模擬し、回復時の保存、回復上限時の欠損記録、実際の配信終了や手動停止での終了を確認する。

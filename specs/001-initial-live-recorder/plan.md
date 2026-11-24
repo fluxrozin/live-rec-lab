@@ -2,14 +2,17 @@
 
 > 実行は同じFeatureの [tasks.md](tasks.md) に沿って行い、検証結果を [traceability.md](traceability.md) に残す。
 
-**Goal**: Windows上のWSL2で、両サービスの監視・録画・コメント記録から復旧・検索まで運用できるようにする。  
-**Branch**: `trial/full-sdd-02`（Featureのディレクトリは `001-initial-live-recorder`）  
-**Spec**: [spec.md](spec.md)  
+**Goal**: Windows上のWSL2で、両サービスの監視・録画・コメント記録から復旧・検索まで運用できるようにする。
+
+**Branch**: `trial/full-sdd-02`（Featureのディレクトリは `001-initial-live-recorder`）
+
+**Spec**: [spec.md](spec.md)
+
 **Architecture**: 単一プロセスの非同期監視・ジョブ制御。有効な記録をSQLiteとWindows側に保持し、WebとCLIでサービスを共有する。
 
 ## Summary
 
-現在のスターターから、同一リポジトリの試作 `aa09977` の既存コードを読み取って採用候補とする。状態・保存・削除・ログの初期契約を先に照合し、回帰を確かめてからこのFeatureに適合させる。試作の仕様成果物、実行時ファイル、過去の検証結果は現在の実装証跡に含めない。
+このFeatureの実装は `src/live_rec_lab/` にある。過去の試作 `aa09977` は採用候補の参照であり、その仕様成果物、実行時ファイル、検証結果は現在の実装証跡に含めない。検証の区別は [traceability.md](traceability.md) を見る。
 
 ## Technical Context
 

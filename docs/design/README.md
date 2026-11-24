@@ -6,7 +6,7 @@
 
 ## 文書の役割と優先順位
 
-文書間の優先順位は `docs/prompts/master.md` に一本化する。上位から **`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様（`specs/NNN-initial-live-recorder/`）→ **5つの運用補助資料（`docs/ARCHITECTURE.md`、`CONFIGURATION.md`、`INSTALL_WSL2.md`、`TROUBLESHOOTING.md`、`LIMITATIONS.md`）→ `docs/IMPLEMENTATION_NOTES.md` → `README.md`**。本ディレクトリは正本から抽出した横断設計であり、Feature成果物（`spec.md`、`plan.md`、`tasks.md` と必要な `research.md`、`data-model.md`、`contracts/`）で具体化する。矛盾したら上位文書を変更・承認してから下位へ反映し、試作の経験知だけで正本を変更しない。`.specify/` はSpec Kit本体、テンプレート、Constitutionの保管場所。運用補助資料は実装前・担当タスク・完成前に参照・更新し、過去の試行時点の説明を現行実装の検証済み事実にしない。
+文書間の優先順位は `docs/prompts/master.md` に一本化する。上位から **`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様（`specs/NNN-initial-live-recorder/`）→ **5つの運用補助資料（`docs/ARCHITECTURE.md`、`CONFIGURATION.md`、`INSTALL_WSL2.md`、`TROUBLESHOOTING.md`、`LIMITATIONS.md`）→ `docs/IMPLEMENTATION_NOTES.md` → `README.md`**。本ディレクトリは正本から抽出した横断設計であり、Feature成果物（`spec.md`、`plan.md`、`tasks.md` と必要な `research.md`、`data-model.md`、`contracts/`）で具体化する。矛盾したら上位文書を変更・承認してから下位へ反映し、試作の経験知だけで正本を変更しない。`.specify/` はSpec Kit本体、テンプレート、Constitutionの保管場所。運用補助資料と `README.md` は現行のコード・CLI・画面に合わせて維持する。本書と過去の試作記録を、現行実装の検証済み事実として扱わない。
 
 ## 文書一覧
 
@@ -39,6 +39,6 @@
 
 - 機能要件を変更する場合、先に `requirements.md` を更新し、影響する設計・Spec Kit featureへ反映する。UI固有変更は `docs/UI_UX.md` も更新する。
 - 本書の各設計は、Source of Truthの**再掲ではなく、各コンポーネントを実装できる粒度に整理した参照用文書**である。重複記述が矛盾した場合は原本を確認する。
-- 細かなRESTエンドポイント、SQLカラム型・制約、状態遷移表の完全版は、実装前に初期Featureの `data-model.md` 等へ具体化する。横断設計との整合を保つ。
+- 細かなRESTエンドポイント、SQLカラム型・制約、状態遷移の具体化は `specs/001-initial-live-recorder/` の `data-model.md` と `contracts/`、および `alembic/versions/` にある。本書は横断設計の参照であり、DDLやAPIの正本ではない。
 - `src/` 内に実装のない空モジュールや、将来機能用のダミーコードを生成しない。
 - 初期対象は **Windows 11 + WSL2 Ubuntu 24.04 / Python 3.12 / uv / TikTok LIVE + ツイキャス**。本リポジトリの現在の `README.md` と要件の前提に合わせたもので、別構成のWindowsネイティブ案を無断で混入しない。

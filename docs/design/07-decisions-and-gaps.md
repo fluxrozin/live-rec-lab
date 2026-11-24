@@ -1,6 +1,8 @@
 # 07. 資料間の不整合・要決定事項
 
 > 対象：GitHub `main` / `d3f2b3a83c0895ecfbe136d8d997dfc611d575ff`（2026-11-23確認）。この文書は**検証・解決の作業台帳**。未確定事項を勝手に確定させない。
+>
+> **2026-11-24時点**：初期Feature `specs/001-initial-live-recorder/` と `src/live_rec_lab/` がある。以下の「詳細待ち」「機能Spec未作成」は当時の台帳の文言である。現行の契約は `data-model.md` と `contracts/`、検証の区別は `traceability.md` と `docs/LIMITATIONS.md` を見る。Bの実機リスクは未検証のままである。
 
 ## A. 確認されたリポジトリ内の不一致
 
@@ -45,10 +47,10 @@
 1. **履歴上は済（2026-11-23、現行再確認要）** 既存原本の不一致（A）を解消し、Python 3.12、パッケージ名 `live_rec_lab`、実行時ディレクトリ `live-rec-lab`、ライト系1テーマを一致させた。リポジトリ名は `live-rec-lab`、アプリケーション名は LiveRecorder。
 2. **履歴上は済（2026-11-23、現行再確認要）** `.specify/memory/constitution.md` を v1.0.0 の開発原則にした。
 3. 外部依存のPOCを必要最小限実施し、実機結果を `docs/research/` または該当featureの `research.md` に保存。
-4. 初期実装は `specs/NNN-initial-live-recorder/` の**1 Feature**とし、開始前に `.specify/feature.json`／`SPECIFY_FEATURE_DIRECTORY` の指す対象と既存Featureを照合する。vertical sliceは同Featureの `tasks.md` 内で独立した実装・検証単位に分割する。`analyze` で重大な不整合を解消してから実装する。§17の `TC` と§23の `AC` を元文書からFeature・テスト・結果へ追跡する。
+4. 初期実装は `specs/001-initial-live-recorder/` の1 Featureとして存在する。別番号のFeatureを作り直さない。`.specify/feature.json` と既存の `spec.md` を照合し、§17の `TC` と§23の `AC` は `traceability.md` で追跡する。
 5. 機能・設計変更が生じたら原本と本設計、機能Spec、受入テストを整合させる。
 
-**注意**：B の実機検証と C の詳細値・契約実装は未完了。C の横断方針は本ZIP内の原本・基本設計へ反映したが、機能Spec・DDL・実稼働での検証済みを意味しない。A の解消は抽出基準コミットより後の作業ツリーにおける記録であり、現行状態は未確認。
+**注意**：Bの実機検証は未完了であり、現行の区別は `docs/LIMITATIONS.md` と `traceability.md` にある。Cの詳細は `specs/001-initial-live-recorder/` の `data-model.md`・`contracts/` と `src/live_rec_lab/` に具体化されている。この台帳の「詳細待ち」は2026-11-23時点の文言であり、実装の有無を上書きしない。Aの解消は当時の作業記録である。
 
 ## E. 実装試行で顕在化した追加検証課題
 

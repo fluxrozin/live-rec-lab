@@ -8,9 +8,9 @@
 4. 録画する場合は専用のWindowsドライブを選びます。他のアプリや試作の**現在の実効録画ルート**をそれぞれの設定から確認し、`LIVE_REC_LAB_EXISTING_RECORDING_ROOTS` に設定します。DBやログのディレクトリも別々にします。変数や設定の詳細は [設定](CONFIGURATION.md) を参照してください。
 5. WSL内で起動します。起動時にSQLiteのマイグレーションと未完了処理の照合を行います。
 
-```bash
-uv run --locked live-rec-lab start
-```
+   ```bash
+   uv run --locked live-rec-lab start
+   ```
 
 6. コンソールに表示される `http://127.0.0.1:<port>` をWindowsのブラウザで開きます。同じ環境と作業ディレクトリで `uv run --locked live-rec-lab status`、`uv run --locked live-rec-lab url` を使えます。
 7. 「設定」で実効保存先と状態を確認し、「配信者一覧」で利用条件と権限を確認した配信者を登録します。「ダッシュボード」で録画とコメント収集を個別に確認します。「録画履歴」のセッション詳細から保存・欠損・字幕・コメントへ移動できます。
