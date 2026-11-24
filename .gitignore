@@ -6,6 +6,15 @@ dist/
 wheels/
 *.egg-info
 
+# Local test / lint / coverage artifacts
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+playwright-report/
+test-results/
+
 # Virtual environments
 .venv/
 
@@ -24,6 +33,14 @@ wheels/
 *.db
 *.db-wal
 *.db-shm
-logs/
-recordings/
-runtime/
+/logs/
+/recordings/
+/runtime/
+# Runtime directories at custom locations must be outside the repository or explicitly ignored.
+
+# Developer-mode local diagnostics / artifacts (never commit)
+.dev-runtime/
+.diagnostics/
+
+# UI evidence: shareable reviewed assets remain tracked; raw/local evidence never tracked
+/specs/*/ui/local-artifacts/

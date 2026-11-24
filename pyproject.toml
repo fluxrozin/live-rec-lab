@@ -1,3 +1,4 @@
+# 依存下限・ビルド依存の指定は初期候補。互換性問題時は要求§1.3とprompts/implement.mdに従い、理由付きで調整・再lock可。
 [project]
 name = "live-rec-lab"
 version = "0.1.0"
@@ -7,8 +8,52 @@ authors = [
     { name = "fluxrozin", email = "fluxrozin@gmail.com" }
 ]
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "alembic>=1.20.1",
+    "curl-cffi>=0.13.0",
+    "fastapi>=0.165.0",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "pydantic-settings>=2.16.3",
+    "python-multipart>=0.0.34",
+    "sqlalchemy>=2",
+    "streamlink>=8.6.3",
+    "tiktoklive>=7.0.1",
+    "uvicorn[standard]>=0.54.0",
+    "yt-dlp>=2026.10.26",
+]
+
+# コアの初期同期では speech extra をインストールしない。音声実装段階で追加する。
+[project.optional-dependencies]
+speech = ["faster-whisper>=1.1,<2"]
+
+[project.scripts]
+live-rec-lab = "live_rec_lab.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.17.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "serial: requires exclusive access to a non-isolatable resource; run separately with -n 0",
+    "live: connects to real external services; requires explicit --run-live and approval; marker alone never authorizes access",
+    "hardware: uses dedicated real hardware or Windows environment; requires explicit --run-hardware and approval; marker alone never authorizes access",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

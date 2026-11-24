@@ -2,30 +2,72 @@
 
 LiveRecorder は、Windows 11 上の WSL2 で動かす個人用のライブ配信記録アプリです。TikTok LIVE とツイキャスを監視し、配信が始まったら動画を自動で録画し、視聴者コメントを時刻と投稿者情報つきで残します。操作は Windows の PC ブラウザから行います。
 
-録画ファイルとSRTは Windows 側の指定ドライブに保存します。エクスプローラーから保存先を開き、外部の動画プレイヤーで利用します。**Web管理画面・APIから動画やSRTのダウンロードは提供しません。** コメントは画面で検索でき、確定した録画セグメントごとにコメント収集の確定状態を踏まえて SRT を生成・再同期します。
+通常運用の録画ファイルと全対応字幕は Windows 側の指定ドライブに保存します（隔離開発者モードは専用Linux領域）。エクスプローラーから保存先を開き、外部の動画プレイヤーで利用します。**Web管理画面・APIから動画や字幕のダウンロードは提供しません。** コメントは画面で検索でき、確定した録画セグメントごとにコメント収集の確定状態を踏まえて SRT を生成・再同期します。
 
-**現状は実装前のスターターキットです。** 本書は `requirements.md` と `docs/UI_UX.md` に基づく**完成後の予定動作**を記します。ここに登場するCLI、管理画面、スクリプトは未実装のものが含まれます。実装開始時は `docs/prompts/master.md` を参照し、実装・検証が進んだ段階で本書も更新してください。
+> **開発状態：初版スターターキット（実装前）。** 以下は初期版の予定仕様・操作手順です。`prompts/implement.md` に従って実装・検証し、実際の動作に合わせて更新してください。
 
-## 起動して画面を開く
 
-LiveRecorder は WSL2（Ubuntu 24.04 LTS を基本）の中で、Python 3.12 のプロセスとして動きます。
+開発時は要求§1.3のMUST／SHOULD／MAYと§17のA/B/Cに従い、最小隔離から録画・コメントの垂直スライスを優先します。コアのみの依存同期は `uv sync --locked`、音声段階で `uv sync --locked --extra speech` を追加します（以下の通常運用例は全機能導入後）。初期計画直後にUI比較3案を提示し、利用者の選択待ちでも可能な独立作業を続けます。質問でターンが終了する場合は同一Featureの記録から再開します。初回目標はL2（初期機能実装）、実利用可能性は機能別L3で判定します（要求§17.5）。
 
-1. WSL2 で LiveRecorder を起動する。CLI には `start`、`status`、`url`、`backup` を用意する。
-2. コンソールに出る URL を、Windows のブラウザで開く。同じ URL は `~/.local/state/live-rec-lab/runtime/endpoint.json` にも残る。`url` でも確認できる。
-3. ポートは空いている番号を自動で割り当てる。固定ポートは設定で選べる。
-4. ログインなしで開く。初期状態の待ち受けは `127.0.0.1` だけで、自分の PC から使う。
+## 開発開始（SDD実行前）
 
-管理画面からは録画の削除や設定変更ができる。LAN やインターネットには出さない。
+このスターターは正本文書と実行指示のみを収録し、`.specify/`、`specs/`、エージェント用の生成済みSkillsは含みません。まず [開発プロンプト利用ガイド](prompts/README.md) を読み、WSL2のリポジトリルートを開いて使用するエージェントに [一気通貫開発開始プロンプト](prompts/start.md) を渡します。詳細な実行指示は [全体実装プロンプト](prompts/implement.md) にあります。Gitの変更許可を確認し、採用するSpec Kitの公式初期化・開発憲法生成・Feature仕様／計画／タスク／追跡表生成へ進みます。`AGENTS.md` が開発原則の正本です。実行後の成果物はGit管理しますが、commit/pushは明示指示がある場合のみ行います。
 
-Windows の画面ロック中とディスプレイ OFF 中は録画を続ける。スリープと休止では処理が止まる。Windows へサインインしたあとの自動起動と、再起動後の監視再開を前提にする。
+初期実装のFeature名は `initial-live-recorder`、初回番号は `001`、初回生成先は `specs/001-initial-live-recorder/` に固定します。監視・録画・コメント・音声字幕・ASS・Web管理画面を同一Featureで扱います。既存Featureは `prompts/implement.md` に従い照合・再利用し、重複生成しません。Featureの指定はGitブランチ名とは独立しています。
+
+## 起動して画面を開く（実装・依存ロック生成後）
+
+Windows 11＋WSL2 Ubuntu 24.04で、Python 3.12、uv、FFmpegを用意し、リポジトリのルートで起動します。
+
+```bash
+uv sync --locked --extra speech
+uv run --locked --extra speech live-rec-lab start
+```
+
+コンソールに出る `http://127.0.0.1:<port>` をブラウザで開きます。同じ環境で次を使います。
+
+- `uv run --locked --extra speech live-rec-lab url` は、生存を確認できたURLを表示します。
+- `uv run --locked --extra speech live-rec-lab status` は、プロセスの状態を表示します。
+- `uv run --locked --extra speech live-rec-lab stop` は、安全停止を要求します。
+- `uv run --locked --extra speech live-rec-lab backup DEST` は、SQLiteのオンラインバックアップを作ります。
+
+URLは `~/.local/state/live-rec-lab/runtime/endpoint.json` にも残ります。終了したプロセスのURLは案内しません。ログインはなく、待ち受けは `127.0.0.1` だけです。既定URLは `http://127.0.0.1:8082` です。固定ポートは設定画面から変更でき、再起動後に反映します。競合時は起動エラーとなり、自動で別ポートに切り替えません。
+
+録画を有効にする前に、DBへ保存済みの録画先と、他の録画アプリケーションや別インスタンスの実効保存先を照合してください。[初回導入](manual/README.md#install-wsl2)・[設定](manual/README.md#configuration)
+
+画面ロック中とディスプレイOFF中の継続、スリープと休止、Windowsへサインインしたあとの自動起動は想定動作です。実機で確認できた範囲は [制限と検証範囲](manual/README.md#limitations) を参照してください。
+
+## 開発者モード（実装後）
+
+通常起動は従来どおり `start`。開発者モードは明示的に起動します。以下はスターターが定義する実装予定のCLIです。
+
+```bash
+uv run --locked --extra speech live-rec-lab start --dev
+# 別シェルで隔離インスタンスの診断・停止
+uv run --locked --extra speech live-rec-lab diagnose --dev --json
+uv run --locked --extra speech live-rec-lab stop --dev
+# 通常運用インスタンスの読み取り専用診断
+uv run --locked --extra speech live-rec-lab diagnose --json
+```
+
+開発者モードは隔離データ・専用設定・固定ポートを使用し、外部通信は既定停止です。通常起動には開発用ルートがありません。実運用の調査は読み取り専用診断とSQLiteバックアップの隔離コピーを使用し、実運用DBを直接開発起動しません。保護パス・排他・worktree分離・手動復元は [統合マニュアル](manual/README.md#developer-mode) を参照してください。
+
+## 開発時の自動テスト（実装後）
+
+```bash
+uv run --locked --extra speech pytest -n auto -m "not serial and not live and not hardware"
+uv run --locked --extra speech pytest -n 0 -m "serial and not live and not hardware"
+```
+
+独立テストは並列化し、分離不能な資源を占有するテストのみ `serial` として別に実行します。負荷に応じて `-n N` で調整でき、`pytest` 単独はローカル試験の直列フォールバックです。`live`／`hardware` は明示許可と実行フラグが必要で、標準実行から除外します。最小の隔離を先に確保し、テスト基盤は機能に合わせて拡張します。詳細は要求§17と統合マニュアルを参照してください。
 
 ## 配信者を登録する
 
 サイドバーの **配信者一覧**（`/streamers`）で配信者を追加する。
 
-- TikTok はユーザー ID、`@username`、プロフィール URL のいずれでも登録できる。
-- ツイキャスはユーザー ID で登録する。API は Client ID と Client Secret による HTTP Basic 認証を使い、利用者ごとのログインは不要。
-- 同じアカウントは重複して登録できない。
+- TikTok はユーザー ID、`@username`、プロフィール URL（`/live` 形式を含む）を登録対象とする。実際に受理する形式は要求§5.1.1の実証済みプロファイルに従う。
+- ツイキャスはユーザー ID またはプロフィール URL で登録する。API は Client ID と Client Secret による HTTP Basic 認証を使い、利用者ごとのログインは不要。
+- 同じアカウントは重複して登録できない。登録後のサービス・正規IDは不変で、別アカウントは新規登録する。
 - 配信者ごとに、監視、録画、コメント収集を別々に有効にできる。
 
 対象は、公開配信か、録画してよい権限がある配信に限る。
@@ -37,20 +79,22 @@ Windows の画面ロック中とディスプレイ OFF 中は録画を続ける�
 配信開始を検知すると、録画とコメント収集をそれぞれ起動する。一方が失敗しても、もう一方は止めない。
 
 - 配信中、録画中、コメント収集中は別の状態として表示する。取得できない状態を「オフライン」や「0 件」にはしない。
-- 録画は Windows 側の保存先へ直接書く。試作専用の例は `D:\live-rec-lab\recordings`（WSL2 からは `/mnt/d/live-rec-lab/recordings`）。ドライブは設定で変えられる。
-- フォルダは配信者 ID、その下は日付。ファイル名で TikTok とツイキャスを区別する。
-- コメントの正本は SQLite に残る。録画セグメントが確定すると、同じフォルダに同名の SRT を 1 つ作る。コメントの書き出し形式は SRT だけ。
+- 録画は Windows 側の保存先へ直接書く。既定は `D:\LiveRecorder`（WSL2 からは `/mnt/d/LiveRecorder`）。保存先は設定画面で変更できる。
+- ツイキャスでプリロールと確認できた区間は、録画ファイルと履歴のセグメントから除外する。セグメント番号は保存対象の録画に付ける。[制限と検証範囲](manual/README.md#limitations)
+- フォルダは配信者 ID、その下は日付。録画ファイル名は `tiktok_streamer01_20261123_210000_夜の雑談_s001.mp4` のように、プラットフォーム・配信者ID・配信開始日時（設定IANAタイムゾーン）・配信タイトル・セグメント番号の順とする。[命名規則](docs/requirements.md#103-ファイル名)
+- コメントの正本は SQLite に残り、画面で検索できます。録画セグメントが確定すると、同じフォルダに動画stemに `_comment.srt` を付けたコメントSRTを、対象コメントがある場合に1つ作ります。コメントSRTに加え、音声SRTと統合ASSを生成します。
 
 ## 記録を探す
 
-サイドバーは**「運用・データ」4画面＋「管理」3画面、計7画面**です。詳細・編集は各画面の下位ビューで行います。
+サイドバーは**「運用・データ」5画面＋「管理」3画面、計8画面**です。詳細・編集は各画面の下位ビューで行います。
 
 | グループ | 表示名 | URL | 主な操作 |
 | --- | --- | --- | --- |
 | 運用・データ | ダッシュボード | `/` | 配信・録画・コメント収集の状況、直近の記録と障害 |
-| 運用・データ | 配信者一覧 | `/streamers` | 配信者の追加・編集・削除、監視・録画・コメント収集のON/OFF |
-| 運用・データ | 録画履歴 | `/recordings` | 配信セッションの検索、動画・SRT・欠損状態の確認、必要な削除操作 |
-| 運用・データ | コメント | `/comments` | 本文・投稿者・配信者・日付による検索・閲覧 |
+| 運用・データ | 配信者一覧 | `/streamers` | 配信者の追加・編集・削除、名前／ID検索、並べ替え、独立した3設定 |
+| 運用・データ | 録画履歴 | `/recordings` | 配信セッションの検索、動画・各字幕・欠損状態の確認、必要な削除操作 |
+| 運用・データ | コメント | `/comments` | 配信別閲覧・横断検索・時刻昇降順 |
+| 運用・データ | 音声字幕 | `/speech` | 文字起こし状態・発話本文・再生成・ASS状態 |
 | 管理 | システム状態 | `/system` | プロセス、保存先、依存ツール、警告・障害の要約 |
 | 管理 | ログ | `/logs` | 構造化ログ・イベントの検索、絞り込み、詳細閲覧（読取専用） |
 | 管理 | 設定 | `/settings` | 監視頻度、保存先、同時録画数、タイムゾーン、フォントなど |
@@ -67,24 +111,37 @@ Windows の画面ロック中とディスプレイ OFF 中は録画を続ける�
 - 同時に録画する上限、録画品質、保存先、空き容量の下限、保存期限
 - タイムゾーン（初期値は `Asia/Tokyo`）
 - 画面のフォント（Windows 標準、または Noto Sans JP）
-- Web のポート（自動割り当て、または固定）
+- 固定Webポート（通常既定8082、隔離既定8083、再起動後に反映）
+- Web画面の自動部分更新間隔（既定5秒、再起動不要）
 
-データベース、ログ、起動 URL は WSL2 の Linux 側に置く。録画動画と SRT だけを Windows のドライブに置く。リポジトリ名は `live-rec-lab`、アプリケーション名は LiveRecorder である。実行時ディレクトリはリポジトリ名に合わせる。Windows の録画フォルダ例は、このアプリケーションの動画と SRT の保存先である。
+データベース、ログ、起動 URL は WSL2 の Linux 側に置く。通常運用の録画動画と対応字幕だけを Windows のドライブに置く。隔離時は専用Linux領域とする。リポジトリ名は `live-rec-lab`、アプリケーション名は LiveRecorder である。実行時ディレクトリはリポジトリ名に合わせる。Windows の既定録画フォルダは、このアプリケーションの動画と SRT の保存先である。
 
-| 置き場所                               | 内容                         |
-| -------------------------------------- | ---------------------------- |
-| `~/.local/share/live-rec-lab/data`     | SQLite                       |
-| `~/.local/state/live-rec-lab/runtime`  | 起動 URL とプロセスの状態    |
-| `~/.local/state/live-rec-lab/logs`     | ログ                         |
-| `/mnt/d/live-rec-lab/recordings`（試作専用例） | 動画セグメントと対応する SRT |
+| 置き場所 | 内容 |
+| --- | --- |
+| `~/.local/share/live-rec-lab/data/app.sqlite3` | SQLite |
+| `~/.local/state/live-rec-lab/runtime` | 起動URLとプロセスの状態 |
+| `~/.local/state/live-rec-lab/logs` | ログ |
+| `/mnt/d/LiveRecorder`（既定・変更可） | 動画セグメントと対応するコメントSRT・音声SRT・ASS |
 
-SQLite の手動バックアップは `backup` で行う。動いているデータベースファイルを、そのままコピーしない。
+SQLiteの手動バックアップは `uv run --locked --extra speech live-rec-lab backup DEST` を使います。動いているデータベースファイルを、そのままコピーしません。旧バックアップには期限削除前のコメントが残る場合があります。
 
-## 関連文書
+## 関連文書・開発入口
 
-- 機能と制約の正本は [requirements.md](requirements.md)
-- 画面の構成と文言の正本は [docs/UI_UX.md](docs/UI_UX.md)
-- 実装を進めるための指示は [docs/prompts/master.md](docs/prompts/master.md)
-- 設計の横断整理は [docs/design/README.md](docs/design/README.md)
-- 実装・運用の補助資料は [構成](docs/ARCHITECTURE.md)・[設定](docs/CONFIGURATION.md)・[WSL2導入](docs/INSTALL_WSL2.md)・[障害対応](docs/TROUBLESHOOTING.md)・[制限と未検証](docs/LIMITATIONS.md)。実装時に読み、実際のコードに合わせて更新してください。
-- `.env.example` は認証情報の**名前だけ**を示すテンプレートです。値を記入する `.env` はGit管理外です。
+- [製品要求仕様](docs/requirements.md)・[統合システム設計](docs/system-design.md)・[UI/UX仕様](docs/ui-spec.md)
+- [開発プロンプト利用ガイド](prompts/README.md)：Spec Kitの導入・利用・再開・バグ修正・機能追加。
+- [一気通貫開発開始プロンプト](prompts/start.md)：チャットへ渡す短い開始・再開指示。
+- [全体実装プロンプト](prompts/implement.md)：初期実装・再開・収束の詳細指示。
+- [UI設計・リデザインプロンプト](prompts/redesign-ui.md)：初期UI・単独リデザインとも3案の比較提示と利用者の明示選択が必須。選択待ちは採用案依存の製品UI実装に限定し、独立作業は継続する。
+- [統合マニュアル](manual/README.md)：導入・設定・構成・障害対応・制限。現行コードと照合して更新する。
+- 要件追跡表はSDD開始後に対象Featureの `traceability.md` として生成する。正本の対応基準は [統合設計 §21](docs/system-design.md)。
+- 実装時に生成する `.env.example` は認証情報の**名前だけ**を示すテンプレートです。値を記入する `.env` はGit管理外です。
+
+## 音声字幕と統合ASS
+
+確定動画の音声認識は初期ON、モデルlarge-v3、言語ja、CUDAを既定とします。GPUが利用不能ならシステム状態と音声字幕で保留理由を確認し、必要なら設定からCPUを明示選択します。初回モデル取得には許可済み配布元への通信とLinux側の空き容量が必要です。隔離では明示承認した準備工程で専用キャッシュへ取得し、ローカル自動試験では自動取得しません。通常キャッシュを流用せず、未取得は保留／未検証とします（要求§7.9・§17）。CUDA・モデル・依存の互換性は導入環境で確認し、推論処理の負荷が大きければ自動生成をOFFにできます。録画・コメントは継続します。
+
+「音声字幕」でキュー、失敗、旧正常版、生成時間、発話本文、個別／失敗一括再試行を確認します。ASSはコメント・音声更新時に再同期し、個別再生成できます。動画と同じフォルダの `<動画stem>_comment.srt`（コメント）、`<動画stem>_speech.srt`（音声）、`<動画stem>.ass`（統合）を外部プレイヤーで使います。ASSは単一トラックです。自動認識は誤認識を含み得ます。コメント期限削除ではコメントSRTとASSを削除し、音声SRTは保持します。全ファイル削除は動画と全対応字幕を対象とします。Webから動画・字幕ファイル本体を取得する機能はありません。
+
+設定の正本は [要求仕様 §11.8.1〜3](docs/requirements.md)。配信者一覧の検索・カスタム並べ替え、コメントの配信別閲覧／横断検索、機能別健康状態、配信者別容量と障害期間集計を初期実装に含む。
+
+システム状態では非同期の手動ストレージ照合を実行・取消できる。読み取り専用で、Webの定期更新は保存された診断結果の読取のみ。録画・コメントの再試行予算は再起動後も維持する。通常起動ではSwagger・ReDoc・OpenAPIを公開しない。
