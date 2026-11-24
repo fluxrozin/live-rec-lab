@@ -97,3 +97,24 @@ def test_speech_settings_and_queue_are_isolated_and_csrf_protected(tmp_path):
     again = client.post("/api/v1/segments/1/speech", headers=headers, json={})
     assert again.json()["id"] == job.json()["id"]
     assert "待機" in client.get("/speech").text
+
+
+def test_web_port_setting_preserves_current_listener_and_checks_csrf_and_revision(tmp_path):
+    client, workspace = client_for(tmp_path)
+    page = client.get("/settings")
+    token = re.search(r'<meta name="csrf-token" content="([^"]+)">', page.text)[1]
+    headers = {"Origin": "http://127.0.0.1:18083", "X-CSRF-Token": token}
+    request = {"web_port": 19083, "revision": 0}
+
+    assert client.put("/api/v1/settings/web-port", json=request).status_code == 403
+    changed = client.put("/api/v1/settings/web-port", headers=headers, json=request)
+    assert changed.status_code == 200
+    assert changed.json() == {"web_port": 19083, "revision": 1, "current_port": 18083, "restart_required": True}
+    assert client.put("/api/v1/settings/web-port", headers=headers, json=request).status_code == 409
+    assert (
+        client.put("/api/v1/settings/web-port", headers=headers, json={"web_port": 0, "revision": 1}).status_code == 422
+    )
+    assert client.get("/api/v1/health").status_code == 200
+    assert "次回起動" in client.get("/settings").text
+    restarted = TestClient(create_fixture_app(workspace, port=19083), base_url="http://127.0.0.1:19083")
+    assert restarted.get("/api/v1/settings/web-port").json()["restart_required"] is False

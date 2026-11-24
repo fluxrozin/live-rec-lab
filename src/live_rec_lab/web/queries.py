@@ -26,6 +26,7 @@ WHERE NOT EXISTS (SELECT 1 FROM comment_expirations WHERE comment_expirations.se
 @contextmanager
 def read_database(workspace: FixtureWorkspace) -> Iterator[sqlite3.Connection]:
     checked = FixtureWorkspace.open(workspace.root)
+    checked.require_ready()
     with closing(sqlite3.connect(checked.database.as_uri() + "?mode=ro", uri=True)) as database:
         database.row_factory = sqlite3.Row
         database.execute("PRAGMA query_only = ON")

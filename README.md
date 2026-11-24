@@ -6,7 +6,7 @@ LiveRecorder は、Windows 11 上の WSL2 で動かす個人用のライブ配�
 
 ## 現在の開発状態
 
-初期Featureの隔離版で、両サービスの架空配信をローカルHLSから録画し、SQLiteへのコメント保存とコメントSRT生成を確認しました。架空の発話から音声SRT・統合ASSを出力できます。実配信の自動監視・取得、実音声認識、通常運用、主要8画面は今後の対象です。
+初期Featureの隔離版で、両サービスの架空配信をローカルHLSから録画し、SQLiteへのコメント保存とコメントSRT生成を確認しました。架空の発話から音声SRT・統合ASSを出力し、採用Aの主要8画面で結果を確認できます。実配信の自動監視・取得、実音声認識、通常運用は今後の対象です。
 
 WSL2のリポジトリルートで、Python 3.12、uv、システムのFFmpeg／ffprobeを用意します。次のコマンドは専用の一時領域に架空データを保存します。
 
@@ -20,7 +20,7 @@ uv run --locked live-rec-lab fixture postprocess "$fixture_root"
 uv run --locked live-rec-lab fixture serve "$fixture_root"
 ```
 
-起動後に [127.0.0.1:8083](http://127.0.0.1:8083/) を開きます。隔離API・診断・バックアップは [Quickstart](specs/001-initial-live-recorder/quickstart.md)、画面の構成は [採用Aの設計記録](specs/001-initial-live-recorder/ui/design.md) を参照してください。
+起動後にコンソールに表示されたURL（既定は [127.0.0.1:8083](http://127.0.0.1:8083/)）を開きます。隔離インスタンスは別シェルから `fixture status`、`fixture url`、`fixture stop` で確認・停止できます。ポートの変更、診断、バックアップ、隔離DBの手動復元手順は [Quickstart](specs/001-initial-live-recorder/quickstart.md) を参照してください。画面構成は [採用Aの設計記録](specs/001-initial-live-recorder/ui/design.md) にあります。
 
 ## 開発の再開
 

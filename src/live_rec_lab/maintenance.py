@@ -115,6 +115,14 @@ _RESTORE_TABLES = {
     "subtitle_publications",
     "comment_expirations",
 }
+_RESTORE_PROTECTED_TABLES = (
+    "streamers",
+    "media_directories",
+    "speech_attempts",
+    "comment_checkpoints",
+    "comment_provider_attributes",
+    "subtitle_revision_operations",
+)
 _RESTORE_COUNTS = {
     "conflicting_session_identity": """
         SELECT count(*) FROM candidate.stream_sessions former
@@ -169,18 +177,38 @@ _RESTORE_COUNTS = {
 def inspect_fixture_restore(workspace: FixtureWorkspace, snapshot_name: str) -> dict[str, object]:
     """Check a backup against the isolated workspace with two read-only schemas."""
     workspace = FixtureWorkspace.open(workspace.root)
+    workspace.require_ready()
+    candidate = fixture_backup_path(workspace, snapshot_name)
+    issues = check_fixture_restore(workspace, workspace.database, candidate)
+    return {
+        "mode": "fixture",
+        "snapshot": snapshot_name,
+        "state": "blocked" if issues else "reviewable",
+        "issues": issues,
+    }
+
+
+def fixture_backup_path(workspace: FixtureWorkspace, snapshot_name: str) -> Path:
     directory = workspace.events.parent / "backups"
     if not _BACKUP_NAME.fullmatch(snapshot_name):
         raise ValueError("invalid fixture backup name")
     candidate = directory / snapshot_name
     try:
         check_fixture_directory(directory, private=True)
-        original_generation = generation(candidate)
+        generation(candidate)
     except (OSError, ValueError) as error:
         raise ValueError("fixture backup is not a verified owned file") from error
+    return candidate
+
+
+def check_fixture_restore(
+    workspace: FixtureWorkspace, current: Path, candidate: Path, *, immutable_current: bool = False
+) -> dict[str, int]:
+    original_generation = generation(candidate)
+    uri = current.as_uri() + ("?mode=ro&immutable=1" if immutable_current else "?mode=ro")
 
     issues = {}
-    with closing(sqlite3.connect(workspace.database.as_uri() + "?mode=ro", uri=True)) as database:
+    with closing(sqlite3.connect(uri, uri=True)) as database:
         database.execute("PRAGMA query_only = ON")
         database.execute("PRAGMA trusted_schema = OFF")
         database.execute("ATTACH DATABASE ? AS candidate", (candidate.as_uri() + "?mode=ro&immutable=1",))
@@ -196,6 +224,7 @@ def inspect_fixture_restore(workspace: FixtureWorkspace, snapshot_name: str) -> 
             ):
                 issues["failed_integrity_check"] = 1
             else:
+                issues.update(_changed_protected_tables(database, tables))
                 for issue, statement in _RESTORE_COUNTS.items():
                     count = database.execute(statement).fetchone()[0]
                     if count:
@@ -222,9 +251,19 @@ def inspect_fixture_restore(workspace: FixtureWorkspace, snapshot_name: str) -> 
         unchanged = False
     if not unchanged:
         issues["backup_changed_during_check"] = 1
-    return {
-        "mode": "fixture",
-        "snapshot": snapshot_name,
-        "state": "blocked" if issues else "reviewable",
-        "issues": issues,
-    }
+    return issues
+
+
+def _changed_protected_tables(database: sqlite3.Connection, candidate_tables: set[str]) -> dict[str, int]:
+    current_tables = {row[0] for row in database.execute("SELECT name FROM main.sqlite_master WHERE type='table'")}
+    issues = {}
+    for table in _RESTORE_PROTECTED_TABLES:
+        if table not in current_tables | candidate_tables:
+            continue
+        if table not in current_tables & candidate_tables or any(
+            database.execute(f"SELECT * FROM {left}.{table} EXCEPT SELECT * FROM {right}.{table} LIMIT 1").fetchone()
+            is not None
+            for left, right in (("main", "candidate"), ("candidate", "main"))
+        ):
+            issues[f"changed_{table}"] = 1
+    return issues

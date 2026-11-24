@@ -70,7 +70,7 @@ function formValues(form) {
   for (const field of Array.from(form.elements)) {
     if (!field.name) continue;
     value[field.name] = field.type === "checkbox" ? field.checked
-      : ["refresh_seconds", "revision"].includes(field.name) ? Number(field.value) : field.value;
+      : ["refresh_seconds", "revision", "web_port"].includes(field.name) ? Number(field.value) : field.value;
   }
   return value;
 }

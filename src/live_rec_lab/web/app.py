@@ -74,6 +74,7 @@ def create_fixture_app(workspace: FixtureWorkspace, port: int = 8083) -> FastAPI
     if not 1024 <= port <= 65535:
         raise ValueError("invalid fixture port")
     workspace = FixtureWorkspace.open(workspace.root)
+    workspace.require_ready()
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     app.state.csrf_token = secrets.token_urlsafe(32)

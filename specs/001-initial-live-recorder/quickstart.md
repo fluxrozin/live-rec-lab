@@ -23,7 +23,22 @@ uv run --locked live-rec-lab fixture backup "$fixture_root"
 uv run --locked live-rec-lab fixture serve "$fixture_root"
 ```
 
-起動後に [127.0.0.1:8083](http://127.0.0.1:8083/) を開きます。ポートが使用中の場合は、専用の未使用固定ポートを `--port` で指定します。取得結果は `/api/v1/sessions`、コメントは `/api/v1/comments?mode=all` で参照できます。終了は起動したシェルで Ctrl+C を使用します。
+起動後にコンソールに表示されたURL（既定は [127.0.0.1:8083](http://127.0.0.1:8083/)）を開きます。別シェルで同じ隔離ルートを指定すると、稼働状態・URLを確認して停止できます。起動したシェルで Ctrl+C も使えます。
+
+```bash
+uv run --locked live-rec-lab fixture status "$fixture_root"
+uv run --locked live-rec-lab fixture url "$fixture_root"
+uv run --locked live-rec-lab fixture stop "$fixture_root"
+```
+
+「設定」の「詳細設定」で保存したポートは次回起動時に適用されます。使用中のポートでは起動に失敗します。停止中に下記のコマンドで現在の設定を確認し、専用の未使用固定ポートに変更できます。`serve --port` の指定はその起動に限り有効です。
+
+```bash
+uv run --locked live-rec-lab fixture config "$fixture_root" get web_port
+uv run --locked live-rec-lab fixture config "$fixture_root" set web_port 18083
+```
+
+取得結果は `/api/v1/sessions`、コメントは `/api/v1/comments?mode=all` で参照できます。
 
 配信者一覧で対象の追加・編集・論理削除、録画詳細でセグメントと字幕状態、コメントと発話本文で検索を試せます。設定の「表示」でフォント・タイムゾーン・ダッシュボードの更新間隔を保存できます。[採用Aの設計記録](ui/design.md)。
 
@@ -48,6 +63,27 @@ uv run --locked live-rec-lab fixture restore-check "$fixture_root" <バックア
 ```
 
 候補を現行DB・媒体世代・コメント期限処理の記録と照合し、問題があれば `blocked` と理由別件数を返します。`reviewable` は照合項目が通過した状態です。このコマンドによるDB差し替えや媒体の変更はありません。
+
+## 隔離DBの手動復元
+
+専用の一時領域にある架空データに対する手順です。Webサーバーと音声などの処理を終了してから、同じ隔離ルートのバックアップのファイル名を指定してください。
+
+```bash
+uv run --locked live-rec-lab fixture restore-prepare "$fixture_root" "$snapshot"
+```
+
+`prepared` が返ると現行DBの退避版が `rollback` に示され、復元未完了マーカーが作られます。以後、サーバー起動や通常処理は拒否され、`fixture diagnose` は復元中の状態を表示します。
+
+交換を行うときは、`data/` に `fixture.sqlite3-wal`、`fixture.sqlite3-shm`、`fixture.sqlite3-journal` がないことを確認してください。候補ファイルのコピーを同じ `data/` 内の一時ファイルに作成し、コピーが完了してから `fixture.sqlite3` に名称変更して置き換えます。差し戻す場合は候補の代わりに `rollback` のファイルを同じ手順で使用します。
+
+```bash
+staged="$(mktemp "$fixture_root/data/.restore-XXXXXX")"
+cp -- "$fixture_root/state/backups/$snapshot" "$staged" &&
+  mv -T -- "$staged" "$fixture_root/data/fixture.sqlite3"
+uv run --locked live-rec-lab fixture restore-finish "$fixture_root"
+```
+
+`restore-finish` は交換したDBを退避時点の記録・媒体世代・期限処理・処理履歴と再照合します。確認が通るとマーカーを解除します。照合できない場合はマーカーが残るので、退避版に差し戻してから再照合できます。
 
 ## 回帰
 

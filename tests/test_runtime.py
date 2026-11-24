@@ -1,7 +1,12 @@
 import json
+import os
+import shutil
 import sqlite3
 from contextlib import closing
 
+import pytest
+
+from live_rec_lab.cli import main
 from live_rec_lab.collection import run_fixture
 from live_rec_lab.isolation import FixtureWorkspace
 from live_rec_lab.runtime import backup_fixture, diagnose_fixture
@@ -131,3 +136,85 @@ def test_restore_check_wont_open_unmanaged_snapshot(tmp_path):
         inspect_fixture_restore(workspace, sibling.name)
     with pytest.raises(ValueError, match="backup"):
         inspect_fixture_restore(workspace, "../" + snapshot.name)
+
+
+def _install_test_snapshot(workspace, snapshot):
+    staged = workspace.database.with_suffix(".restore")
+    shutil.copyfile(snapshot, staged)
+    staged.chmod(0o600)
+    os.replace(staged, workspace.database)
+
+
+def test_manual_fixture_restore_fences_server_and_jobs_until_verified(tmp_path, capsys):
+    workspace = FixtureWorkspace.initialize(tmp_path / "fixture")
+    run_fixture(workspace)
+    candidate = backup_fixture(workspace)
+    root = str(workspace.root)
+    marker = workspace.events.parent / "restore-in-progress.json"
+
+    assert main(["fixture", "config", root, "set", "web_port", "18083"]) == 0
+    capsys.readouterr()
+    assert diagnose_fixture(workspace)["database"]["integrity"] == "ok"
+    with workspace.exclusive(worker="speech"):
+        assert main(["fixture", "restore-prepare", root, candidate.name]) == 1
+    assert not marker.exists()
+    assert main(["fixture", "restore-prepare", root, candidate.name]) == 0
+    prepared = json.loads(capsys.readouterr().out)
+    rollback = candidate.parent / prepared["rollback"]
+    assert marker.is_file() and rollback.is_file() and rollback != candidate
+    assert diagnose_fixture(workspace)["runtime"]["state"] == "restore_in_progress"
+    assert main(["fixture", "serve", root]) == 1
+    assert main(["fixture", "config", root, "set", "web_port", "8084"]) == 1
+    with pytest.raises(ValueError, match="restore"):
+        run_fixture(workspace)
+
+    _install_test_snapshot(workspace, candidate)
+    assert main(["fixture", "restore-finish", root]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "restored"
+    assert not marker.exists()
+    assert main(["fixture", "config", root, "get", "web_port"]) == 0
+    assert json.loads(capsys.readouterr().out)["web_port"] == 8083
+    assert run_fixture(workspace)["comment_count"] == 2
+
+
+def test_manual_fixture_restore_preserves_marker_for_unexpected_database_and_allows_rollback(tmp_path, capsys):
+    workspace = FixtureWorkspace.initialize(tmp_path / "fixture")
+    candidate = backup_fixture(workspace)
+    root = str(workspace.root)
+    marker = workspace.events.parent / "restore-in-progress.json"
+
+    assert main(["fixture", "config", root, "set", "web_port", "18083"]) == 0
+    capsys.readouterr()
+    assert main(["fixture", "restore-prepare", root, candidate.name]) == 0
+    rollback = candidate.parent / json.loads(capsys.readouterr().out)["rollback"]
+    with closing(sqlite3.connect(workspace.database)) as database, database:
+        database.execute("CREATE TABLE unverified (id INTEGER)")
+    assert main(["fixture", "restore-finish", root]) == 1
+    assert marker.is_file()
+    _install_test_snapshot(workspace, rollback)
+    sidecar = workspace.database.with_name(workspace.database.name + "-wal")
+    sidecar.touch()
+    assert main(["fixture", "restore-finish", root]) == 1
+    assert sidecar.exists() and marker.is_file()
+    sidecar.unlink()
+
+    assert main(["fixture", "restore-finish", root]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "rolled_back"
+    assert not marker.exists()
+    assert main(["fixture", "config", root, "get", "web_port"]) == 0
+    assert json.loads(capsys.readouterr().out)["web_port"] == 18083
+
+
+def test_restore_prepare_rejects_an_older_speech_queue(tmp_path, capsys):
+    from live_rec_lab.speech_jobs import enqueue_speech
+
+    workspace = FixtureWorkspace.initialize(tmp_path / "fixture")
+    run_fixture(workspace)
+    older = backup_fixture(workspace)
+    enqueue_speech(workspace, 1)
+
+    assert main(["fixture", "restore-prepare", str(workspace.root), older.name]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["state"] == "blocked"
+    assert report["issues"]["changed_speech_attempts"]
+    assert not (workspace.events.parent / "restore-in-progress.json").exists()

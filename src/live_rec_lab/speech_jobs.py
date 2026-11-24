@@ -163,6 +163,7 @@ def latest_speech(database: sqlite3.Connection, segment_id: int) -> SpeechAttemp
 
 def speech_attempts(workspace: FixtureWorkspace) -> list[SpeechAttempt]:
     workspace = FixtureWorkspace.open(workspace.root)
+    workspace.require_ready()
     with closing(sqlite3.connect(workspace.database.as_uri() + "?mode=ro", uri=True)) as database:
         database.row_factory = sqlite3.Row
         if not _has_table(database, "speech_attempts"):

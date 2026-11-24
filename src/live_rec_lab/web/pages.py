@@ -1,6 +1,7 @@
 """Local management views for the selected operations-list layout."""
 
 from contextlib import closing
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
@@ -10,6 +11,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException
 
 from ..db import connect
@@ -17,6 +19,7 @@ from ..isolation import FixtureWorkspace
 from ..runtime import diagnose_fixture
 from ..speech_jobs import read_speech_configuration
 from ..streamers import ACCOUNT_COLUMNS, account_view
+from ..web_port import PortRevisionConflict, WebPort, read_web_port, save_web_port
 from .preferences import DisplayConflict, DisplayPreferences, read_preferences, save_preferences
 from .queries import comment_page, history_page, like_pattern, page_rows, read_database, session_select
 from .screen_data import (
@@ -50,6 +53,13 @@ Page = Annotated[int, Query(ge=1, le=10_000_000)]
 Term = Annotated[str, Query(max_length=256)]
 Identity = Annotated[int | None, Query(ge=1, le=2**63 - 1)]
 Platform = Literal["", "tiktok", "twitcasting"]
+
+
+class WebPortUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    web_port: Annotated[int, Field(strict=True, ge=1024, le=65535)]
+    revision: Annotated[int, Field(strict=True, ge=0, le=2**63 - 2)]
 
 
 def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
@@ -345,7 +355,30 @@ def mount_pages(app: FastAPI, workspace: FixtureWorkspace, port: int) -> None:
     def settings(request: Request):
         with read_database(workspace) as database:
             audio = read_speech_configuration(database)
-        return render(request, "settings", {"port": port, "audio": audio})
+        return render(request, "settings", {"audio": audio, "web_port": web_port_status(read_web_port(workspace))})
+
+    def web_port_status(saved: WebPort) -> dict:
+        return {**asdict(saved), "current_port": port, "restart_required": saved.web_port != port}
+
+    @app.get("/api/v1/settings/web-port")
+    def get_web_port():
+        return web_port_status(read_web_port(workspace))
+
+    @app.put("/api/v1/settings/web-port")
+    def set_web_port(request: Request, update: WebPortUpdate):
+        try:
+            return web_port_status(save_web_port(workspace, update.web_port, revision=update.revision))
+        except PortRevisionConflict:
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "web_port_conflict",
+                        "message": "ポート設定が更新されました。入力内容を控えて再読み込みしてください。",
+                        "correlation_id": request.state.correlation_id,
+                    }
+                },
+                status_code=409,
+            )
 
     @app.get("/api/v1/settings/display")
     def get_display_settings():

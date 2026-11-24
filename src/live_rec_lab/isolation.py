@@ -82,6 +82,18 @@ class FixtureWorkspace:
     def lock(self) -> Path:
         return self.root / "state" / "fixture.lock"
 
+    @property
+    def restore_marker(self) -> Path:
+        return self.events.with_name("restore-in-progress.json")
+
+    @property
+    def restore_pending(self) -> bool:
+        return os.path.lexists(self.restore_marker)
+
+    def require_ready(self) -> None:
+        if self.restore_pending:
+            raise IsolationError("fixture restore is in progress")
+
     @classmethod
     def initialize(cls, root: Path) -> "FixtureWorkspace":
         _check_location(root)
@@ -111,7 +123,9 @@ class FixtureWorkspace:
         return workspace
 
     @contextmanager
-    def exclusive(self, *, worker: Literal["server", "speech", "comments"] | None = None) -> Iterator[int]:
+    def exclusive(
+        self, *, worker: Literal["server", "speech", "comments"] | None = None, maintenance: bool = False
+    ) -> Iterator[int]:
         self.open(self.root)
         lock = self.lock.with_name(f"{worker}.lock") if worker else self.lock
         fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
@@ -121,6 +135,8 @@ class FixtureWorkspace:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as error:
                 raise IsolationError("fixture workspace is busy") from error
+            if not maintenance:
+                self.require_ready()
             yield fd
         finally:
             os.close(fd)

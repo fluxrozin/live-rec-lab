@@ -47,7 +47,14 @@
       </form>
     </section>
     <section class="panel" id="advanced"><div class="section-head"><h2>詳細設定</h2></div>
-      <dl class="metrics"><div><dt>待ち受けポート</dt><dd>{{ port }}</dd></div><div><dt>接続範囲</dt><dd>ループバック</dd></div></dl>
+      <dl class="metrics"><div><dt>現在の待ち受けポート</dt><dd>{{ web_port.current_port }}</dd></div><div><dt>接続範囲</dt><dd>ループバック</dd></div></dl>
+      <form class="preferences-form" data-api="/api/v1/settings/web-port" data-method="PUT" data-success="次回起動のポートを保存しました。" action="#" method="dialog">
+        <input type="hidden" name="revision" value="{{ web_port.revision }}">
+        <label>次回起動のポート<input name="web_port" type="number" min="1024" max="65535" step="1" value="{{ web_port.web_port }}" required></label>
+        {% if web_port.restart_required %}<p class="muted">保存済みのポートは次回起動時に適用されます。</p>{% endif %}
+        <p class="form-message" role="status" hidden></p>
+        <div class="form-actions"><button type="submit" class="button primary">ポートを保存</button></div>
+      </form>
     </section>
   </div>
 </div>
