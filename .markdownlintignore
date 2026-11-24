@@ -1,0 +1,7 @@
+.agents/skills/
+.cursor/skills/
+.claude/skills/
+.specify/extensions/bug/commands/
+.venv/
+node_modules/
+.pytest_cache/

@@ -4,11 +4,11 @@ LiveRecorder の開発を開始する人向けの手順書です。製品仕様�
 
 ## 1. どのプロンプトを使うか
 
-| ファイル | 用途 | 使い方 |
-| --- | --- | --- |
-| [start.md](start.md) | 一気通貫開発の開始・中断再開 | 内容をチャットに貼る、またはファイルを参照して実行する |
-| [implement.md](implement.md) | 全体実装の詳細指示 | 開始プロンプトが参照する。直接実行も可能 |
-| [redesign-ui.md](redesign-ui.md) | UIだけの初期設計・全面再設計・局所修正 | 全体実装から呼び出すか、完成後に単独実行する |
+| ファイル                         | 用途                                   | 使い方                                                 |
+| -------------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| [start.md](start.md)             | 一気通貫開発の開始・中断再開           | 内容をチャットに貼る、またはファイルを参照して実行する |
+| [implement.md](implement.md)     | 全体実装の詳細指示                     | 開始プロンプトが参照する。直接実行も可能               |
+| [redesign-ui.md](redesign-ui.md) | UIだけの初期設計・全面再設計・局所修正 | 全体実装から呼び出すか、完成後に単独実行する           |
 
 **通常は `start.md` だけを実行すればよい。** `implement.md` の全文をチャットに貼る必要はない。エージェントがリポジトリ内のファイルを読めることが前提となる。
 
@@ -48,11 +48,11 @@ specify init --help
 
 **推奨：** 初期化も含めて一気通貫でエージェントに任せる場合、以下を手動で実行せず §4 の開始プロンプトへ進む。手動で初期化したい場合のみ、リポジトリのルートで利用するエージェントに対応する1行を実行する。
 
-| エージェント | 初期化コマンドの例 | Skillsの配置先（対応版の例） |
-| --- | --- | --- |
-| Cursor | `specify init --here --integration cursor-agent --script sh` | `.cursor/skills/` |
-| Codex | `specify init --here --integration codex --script sh` | `.agents/skills/` |
-| Claude Code | `specify init --here --integration claude --script sh` | `.claude/skills/` |
+| エージェント | 初期化コマンドの例                                           | Skillsの配置先（対応版の例） |
+| ------------ | ------------------------------------------------------------ | ---------------------------- |
+| Cursor       | `specify init --here --integration cursor-agent --script sh` | `.cursor/skills/`            |
+| Codex        | `specify init --here --integration codex --script sh`        | `.agents/skills/`            |
+| Claude Code  | `specify init --here --integration claude --script sh`       | `.claude/skills/`            |
 
 上記の統合名は [公式Integrations](https://github.github.com/spec-kit/integrations/) に基づく。採用版によってオプションや統合方式が異なるため、ローカルの `specify init --help` と採用版の公式手順を優先する。非空ディレクトリのマージ確認が出た場合は、バックアップ・上書き範囲を確認し、承認した場合のみ進む。`--force` は自動的に使わない。既存のGitリポジトリを再初期化しない。無人実行で選択待ちを避ける必要があるときだけ、対応版の `--non-interactive` を検討する。
 
@@ -76,18 +76,18 @@ prompts/start.md を読み、その指示に従って LiveRecorder の開発を�
 
 全体実装を任せる場合は、以下の工程を利用者が毎回手動入力する必要はない。個別実行でも `implement.md` のFeature照合、安全条件、簡易追跡と技術依存に従う。
 
-| 工程 | Skill | 主な役割・成果物 |
-| --- | --- | --- |
-| 開発憲法 | `speckit-constitution` | `AGENTS.md` の原則から `.specify/memory/constitution.md` を生成・照合 |
-| 仕様化 | `speckit-specify` | 要求正本に基づく `spec.md` |
-| 明確化 | `speckit-clarify` | 必要時に曖昧さ・未確定事項を整理 |
-| 計画 | `speckit-plan` | `plan.md`、調査・データモデル・契約・quickstart |
-| タスク | `speckit-tasks` | 依存関係付き `tasks.md` |
-| 品質確認 | `speckit-checklist` | 仕様品質・検査項目 |
-| 整合性分析 | `speckit-analyze` | 読取専用の矛盾・漏れ・依存検査 |
-| 実装 | `speckit-implement` | コード・試験・機能別検証・未検証の記録 |
-| 統合時の簡易照合 | Implementの一部 | `traceability.md` と全固定IDを一度照合。A/B/C・未検証を記録 |
-| 収束 | `speckit-converge`（必要時） | 重要な追加タスクを追記し、追加実装・再検証 |
+| 工程             | Skill                        | 主な役割・成果物                                                      |
+| ---------------- | ---------------------------- | --------------------------------------------------------------------- |
+| 開発憲法         | `speckit-constitution`       | `AGENTS.md` の原則から `.specify/memory/constitution.md` を生成・照合 |
+| 仕様化           | `speckit-specify`            | 要求正本に基づく `spec.md`                                            |
+| 明確化           | `speckit-clarify`            | 必要時に曖昧さ・未確定事項を整理                                      |
+| 計画             | `speckit-plan`               | `plan.md`、調査・データモデル・契約・quickstart                       |
+| タスク           | `speckit-tasks`              | 依存関係付き `tasks.md`                                               |
+| 品質確認         | `speckit-checklist`          | 仕様品質・検査項目                                                    |
+| 整合性分析       | `speckit-analyze`            | 読取専用の矛盾・漏れ・依存検査                                        |
+| 実装             | `speckit-implement`          | コード・試験・機能別検証・未検証の記録                                |
+| 統合時の簡易照合 | Implementの一部              | `traceability.md` と全固定IDを一度照合。A/B/C・未検証を記録           |
+| 収束             | `speckit-converge`（必要時） | 重要な追加タスクを追記し、追加実装・再検証                            |
 
 初期Featureは `specs/001-initial-live-recorder/` を明示的に使用し、既存成果物を上書き・重複生成しない。Analyzeは読取専用とし、指摘は別工程で正本へ自律整合させる（採用Skill固有の承認契約は遵守）。重大な仕様変更だけ利用者判断を求める。固定IDの簡易対応表を維持する。Clarifyは重大な判断不能事項のみ、追加成果物は採用Skillの契約内で簡潔にする。初期は垂直スライスと早期UI比較、Aの代表検証を優先。Checklistは簡易、Analyzeは原則1回、Convergeは重要な残課題がある場合のみ。Skill固有の承認は守り、重複承認は設けない。承認対象以外の作業を続け、ターンが終了する場合は再開点を保存する。正本の段階参照はimplement.md §1に従う。
 
@@ -139,12 +139,12 @@ prompts/redesign-ui.md を読み、REDESIGN モードでWeb管理画面だけを
 
 ## 8. 生成物とGit管理
 
-| 対象 | 位置付け |
-| --- | --- |
-| `.specify/`・エージェント統合 | 採用版の初期化で生成する開発環境 |
-| `.specify/memory/constitution.md` | `AGENTS.md` から生成する開発憲法 |
-| `specs/` | Featureごとの派生仕様・計画・タスク・追跡・検証記録 |
-| `src/`・`tests/`・`uv.lock` | 実装工程で生成する製品・テスト・依存ロック |
+| 対象                              | 位置付け                                            |
+| --------------------------------- | --------------------------------------------------- |
+| `.specify/`・エージェント統合     | 採用版の初期化で生成する開発環境                    |
+| `.specify/memory/constitution.md` | `AGENTS.md` から生成する開発憲法                    |
+| `specs/`                          | Featureごとの派生仕様・計画・タスク・追跡・検証記録 |
+| `src/`・`tests/`・`uv.lock`       | 実装工程で生成する製品・テスト・依存ロック          |
 
 スターターに含めないこととGit管理から除外することは異なる。証跡境界は `AGENTS.md` に従い、`specs/` 全体を除外せずローカル出力のみ除外する。共有すべき文書と開発環境はGit管理し、秘密・録画・DB・ログは除外する。commit/pushは明示許可が必要。正本と矛盾する派生文書は自律修正する。
 

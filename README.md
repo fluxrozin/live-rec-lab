@@ -4,16 +4,27 @@ LiveRecorder は、Windows 11 上の WSL2 で動かす個人用のライブ配�
 
 通常運用の録画ファイルと全対応字幕は Windows 側の指定ドライブに保存します（隔離開発者モードは専用Linux領域）。エクスプローラーから保存先を開き、外部の動画プレイヤーで利用します。**Web管理画面・APIから動画や字幕のダウンロードは提供しません。** コメントは画面で検索でき、確定した録画セグメントごとにコメント収集の確定状態を踏まえて SRT を生成・再同期します。
 
-> **開発状態：初版スターターキット（実装前）。** 以下は初期版の予定仕様・操作手順です。`prompts/implement.md` に従って実装・検証し、実際の動作に合わせて更新してください。
+## 現在の開発状態
 
+初期Featureの隔離版で、両サービスの架空配信をローカルHLSから録画し、SQLiteへのコメント保存とコメントSRT生成を確認しました。架空の発話から音声SRT・統合ASSを出力できます。実配信の自動監視・取得、実音声認識、通常運用、主要8画面は今後の対象です。
 
-開発時は要求§1.3のMUST／SHOULD／MAYと§17のA/B/Cに従い、最小隔離から録画・コメントの垂直スライスを優先します。コアのみの依存同期は `uv sync --locked`、音声段階で `uv sync --locked --extra speech` を追加します（以下の通常運用例は全機能導入後）。初期計画直後にUI比較3案を提示し、利用者の選択待ちでも可能な独立作業を続けます。質問でターンが終了する場合は同一Featureの記録から再開します。初回目標はL2（初期機能実装）、実利用可能性は機能別L3で判定します（要求§17.5）。
+WSL2のリポジトリルートで、Python 3.12、uv、システムのFFmpeg／ffprobeを用意します。次のコマンドは専用の一時領域に架空データを保存します。
 
-## 開発開始（SDD実行前）
+```bash
+uv sync --locked
+fixture_root="$(mktemp -d)/live-rec-lab-fixture"
+uv run --locked live-rec-lab fixture init "$fixture_root"
+uv run --locked live-rec-lab fixture run "$fixture_root"
+uv run --locked live-rec-lab fixture run "$fixture_root" --service twitcasting
+uv run --locked live-rec-lab fixture postprocess "$fixture_root"
+uv run --locked live-rec-lab fixture serve "$fixture_root"
+```
 
-このスターターは正本文書と実行指示のみを収録し、`.specify/`、`specs/`、エージェント用の生成済みSkillsは含みません。まず [開発プロンプト利用ガイド](prompts/README.md) を読み、WSL2のリポジトリルートを開いて使用するエージェントに [一気通貫開発開始プロンプト](prompts/start.md) を渡します。詳細な実行指示は [全体実装プロンプト](prompts/implement.md) にあります。Gitの変更許可を確認し、採用するSpec Kitの公式初期化・開発憲法生成・Feature仕様／計画／タスク／追跡表生成へ進みます。`AGENTS.md` が開発原則の正本です。実行後の成果物はGit管理しますが、commit/pushは明示指示がある場合のみ行います。
+起動後に [127.0.0.1:8083](http://127.0.0.1:8083/) を開きます。隔離API・診断・バックアップは [Quickstart](specs/001-initial-live-recorder/quickstart.md)、画面の構成は [採用Aの設計記録](specs/001-initial-live-recorder/ui/design.md) を参照してください。
 
-初期実装のFeature名は `initial-live-recorder`、初回番号は `001`、初回生成先は `specs/001-initial-live-recorder/` に固定します。監視・録画・コメント・音声字幕・ASS・Web管理画面を同一Featureで扱います。既存Featureは `prompts/implement.md` に従い照合・再利用し、重複生成しません。Featureの指定はGitブランチ名とは独立しています。
+## 開発の再開
+
+[初期Featureのタスクと再開点](specs/001-initial-live-recorder/tasks.md) と [開始プロンプト](prompts/start.md) を参照してください。Spec Kit 1.4.4 のCodex統合を導入済みです。開発原則の正本は [AGENTS.md](AGENTS.md)、製品・UI・技術の正本は [要求](docs/requirements.md)、[UI仕様](docs/ui-spec.md)、[技術設計](docs/system-design.md) です。以下の通常運用手順は実装予定です。
 
 ## 起動して画面を開く（実装・依存ロック生成後）
 
@@ -88,16 +99,16 @@ uv run --locked --extra speech pytest -n 0 -m "serial and not live and not hardw
 
 サイドバーは**「運用・データ」5画面＋「管理」3画面、計8画面**です。詳細・編集は各画面の下位ビューで行います。
 
-| グループ | 表示名 | URL | 主な操作 |
-| --- | --- | --- | --- |
-| 運用・データ | ダッシュボード | `/` | 配信・録画・コメント収集の状況、直近の記録と障害 |
-| 運用・データ | 配信者一覧 | `/streamers` | 配信者の追加・編集・削除、名前／ID検索、並べ替え、独立した3設定 |
-| 運用・データ | 録画履歴 | `/recordings` | 配信セッションの検索、動画・各字幕・欠損状態の確認、必要な削除操作 |
-| 運用・データ | コメント | `/comments` | 配信別閲覧・横断検索・時刻昇降順 |
-| 運用・データ | 音声字幕 | `/speech` | 文字起こし状態・発話本文・再生成・ASS状態 |
-| 管理 | システム状態 | `/system` | プロセス、保存先、依存ツール、警告・障害の要約 |
-| 管理 | ログ | `/logs` | 構造化ログ・イベントの検索、絞り込み、詳細閲覧（読取専用） |
-| 管理 | 設定 | `/settings` | 監視頻度、保存先、同時録画数、タイムゾーン、フォントなど |
+| グループ     | 表示名         | URL           | 主な操作                                                           |
+| ------------ | -------------- | ------------- | ------------------------------------------------------------------ |
+| 運用・データ | ダッシュボード | `/`           | 配信・録画・コメント収集の状況、直近の記録と障害                   |
+| 運用・データ | 配信者一覧     | `/streamers`  | 配信者の追加・編集・削除、名前／ID検索、並べ替え、独立した3設定    |
+| 運用・データ | 録画履歴       | `/recordings` | 配信セッションの検索、動画・各字幕・欠損状態の確認、必要な削除操作 |
+| 運用・データ | コメント       | `/comments`   | 配信別閲覧・横断検索・時刻昇降順                                   |
+| 運用・データ | 音声字幕       | `/speech`     | 文字起こし状態・発話本文・再生成・ASS状態                          |
+| 管理         | システム状態   | `/system`     | プロセス、保存先、依存ツール、警告・障害の要約                     |
+| 管理         | ログ           | `/logs`       | 構造化ログ・イベントの検索、絞り込み、詳細閲覧（読取専用）         |
+| 管理         | 設定           | `/settings`   | 監視頻度、保存先、同時録画数、タイムゾーン、フォントなど           |
 
 **録画履歴は配信セッションを単位**とします。動画がなくてもコメントが残っていれば履歴に表示し、コメントへ移動できます。セグメント詳細からSRTの状態確認・再生成を扱います。一覧へ戻るときは検索条件を維持します。
 
@@ -116,12 +127,12 @@ uv run --locked --extra speech pytest -n 0 -m "serial and not live and not hardw
 
 データベース、ログ、起動 URL は WSL2 の Linux 側に置く。通常運用の録画動画と対応字幕だけを Windows のドライブに置く。隔離時は専用Linux領域とする。リポジトリ名は `live-rec-lab`、アプリケーション名は LiveRecorder である。実行時ディレクトリはリポジトリ名に合わせる。Windows の既定録画フォルダは、このアプリケーションの動画と SRT の保存先である。
 
-| 置き場所 | 内容 |
-| --- | --- |
-| `~/.local/share/live-rec-lab/data/app.sqlite3` | SQLite |
-| `~/.local/state/live-rec-lab/runtime` | 起動URLとプロセスの状態 |
-| `~/.local/state/live-rec-lab/logs` | ログ |
-| `/mnt/d/LiveRecorder`（既定・変更可） | 動画セグメントと対応するコメントSRT・音声SRT・ASS |
+| 置き場所                                       | 内容                                              |
+| ---------------------------------------------- | ------------------------------------------------- |
+| `~/.local/share/live-rec-lab/data/app.sqlite3` | SQLite                                            |
+| `~/.local/state/live-rec-lab/runtime`          | 起動URLとプロセスの状態                           |
+| `~/.local/state/live-rec-lab/logs`             | ログ                                              |
+| `/mnt/d/LiveRecorder`（既定・変更可）          | 動画セグメントと対応するコメントSRT・音声SRT・ASS |
 
 SQLiteの手動バックアップは `uv run --locked --extra speech live-rec-lab backup DEST` を使います。動いているデータベースファイルを、そのままコピーしません。旧バックアップには期限削除前のコメントが残る場合があります。
 
