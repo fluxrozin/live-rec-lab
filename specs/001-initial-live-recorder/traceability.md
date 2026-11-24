@@ -13,7 +13,7 @@
 | §4,5.3 | AC-004 | TC-004、TC-018、TC-023、TC-025、TC-065 | FR-003 | T007、T008、T013 | tests/test_monitoring.py、tests/test_e2e.py | 未検証（模擬LIVE・OFFLINE・UNKNOWN、実配信の開始終了は要検証） |
 | §5.1,6.1 | AC-005 | TC-027、TC-034、TC-037 | FR-004 | T007、T016 | tests/test_api.py、tests/test_e2e.py | ローカル検証済み（3設定の入力と独立ジョブ制御を模擬） |
 | §4.1.4,6 | AC-006 | TC-023、TC-029、TC-043、TC-044 | FR-005 | T008、T009、T012 | tests/test_e2e.py、tests/test_recording.py | 未検証（模擬検知からFFmpeg確定まで検証。TikTok実配信を要検証） |
-| §4.2.3,6 | AC-007 | TC-020、TC-029、TC-067 | FR-005 | T009、T013 | tests/test_recording.py、tests/test_twitcasting.py | 未検証（模擬公式API、HLS。実配信の本編先頭／末尾を要検証） |
+| §4.2.3,6 | AC-007 | TC-020、TC-029、TC-067 | FR-005 | T009、T013 | tests/test_recording.py、tests/test_twitcasting.py | 実機検証済み（公開配信1件で本編78.976秒だけをセグメント1に保存し、全編をデコード。先頭・末尾の完全性はTC-067に記録） |
 | §6.1,16.2 | AC-008 | TC-023、TC-044、TC-052 | FR-005 | T007、T009、T012 | tests/test_e2e.py、tests/test_web_settings.py | ローカル検証済み（ローカルHLSの2並列と3件目の待機。実配信の帯域は未計測） |
 | §6.5,8.3 | AC-009 | TC-043、TC-044、TC-045、TC-063 | FR-005 | T007、T009 | tests/test_recording.py | ローカル検証済み（中断を模擬し、録画プロセスの回収と再試行を確認） |
 | §9.4,10.2–10.3,14.2 | AC-010 | TC-008、TC-022、TC-029、TC-053、TC-054、TC-059 | FR-008 | T005、T009 | tests/test_storage.py、tests/test_recording.py、tests/test_recovery.py | 未検証（Linux一時領域の保存・回復。Windows側の確定を要検証） |
@@ -86,7 +86,7 @@
 | TC-017 | 異なる正規化済みIDのWindows安全名が一致する場合の安定したフォルダ識別子・永続マッピング、同じ正規化済みIDのサービス横断でのフォルダ共有、管理外フォルダの誤取込防止 | AC-051 | FR-008 | T005 | tests/test_storage.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-018 | TikTokのHTTP応答（403/429/5xx・空本文・非JSON）と通信障害をOFFLINEへ誤変換しないこと、未知状態で稼働中セッションを終了させないこと | AC-001、AC-004 | FR-004 | T007 | tests/test_monitoring.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-019 | TikTokLiveの受信タスク寿命・遅延コメント・停止時キュードレイン・例外伝播・子タスク解放 | AC-014、AC-030、AC-045 | FR-006 | T010 | tests/test_comments.py、tests/test_monitoring.py | ローカル検証済み（下記ローカル実行証跡） |
-| TC-020 | HLSの短い先頭／不連続／本編を使ったプリロール識別の分岐と、**本編冒頭を誤って破棄しない**否定ケース | AC-007 | FR-018 | T013 | tests/test_recording.py、tests/test_twitcasting.py | ローカル検証済み（下記ローカル実行証跡） |
+| TC-020 | 不連続タグの有無、初期化情報の切り替わり、既知素材の繰り返しによる識別。正式保存・採番・履歴からの除外と、本編冒頭の保全 | AC-007 | FR-005、FR-018 | T009、T013 | tests/test_recording.py、tests/test_twitcasting.py | ローカル検証済み（タグの省略、共有初期化、暗黙のバイト範囲、映像・音声の繰り返し、本編のみの確定を確認） |
 | TC-021 | FLV映像コーデック不明・0バイトMP4の拒否、ffmpeg/ffprobe実体の選択、確定後メディア長の再検証 | AC-013 | FR-005 | T009 | tests/test_recording.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-022 | 空試行の連番非消費、複数ジョブでの `UNIQUE(stream_session_id, segment_number)`・複合外部キー・同時採番予約、予約後クラッシュ時の番号非再利用と欠損保存 | AC-010 | FR-005 | T009 | tests/test_db.py、tests/test_recording.py、tests/test_recovery.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-023 | 配信開始から録画開始まで（サービス別監視頻度の変更・再起動なしの反映・TikTok最大10回／分／ツイキャス初期値10回／分と最大60回／分の独立監視枠を検証） | AC-001、AC-002、AC-004、AC-006、AC-008、AC-031 | FR-004 | T007 | tests/test_e2e.py、tests/test_monitoring.py | 未検証（検知から録画と監視枠の単体検査。両サービス統合の連続頻度は未検証） |
@@ -133,7 +133,7 @@
 | TC-064 | コーデック不明な有意の一時ファイルを検証前に成功扱いせず保全し、0バイトMP4・DB上の `valid`・実ファイル不在の矛盾を検出すること | AC-012、AC-013、AC-034 | FR-005 | T009 | tests/test_recording.py、tests/test_recovery.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-065 | 録画監視の不明状態が続く間の回復・明示OFFLINE→ENDING→再確認・終了未確認での有限収束と、同じ配信での重複ジョブ生成防止 | AC-004 | FR-004 | T007 | tests/test_monitoring.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-066 | 削除処理中の強制終了・一部ファイル削除・自動削除・履歴付き配信者削除を模擬し、孤立ファイル・誤成功・コメント／欠損の意図しない消失がないこと | 横断条件（原本の固定テスト） | FR-010 | T014 | tests/test_retention.py、tests/test_web_ui.py | ローカル検証済み（下記ローカル実行証跡） |
-| TC-067 | ツイキャスの短いプリロールのみで終わる挙動と、実配信での本編・先頭・末尾の収録確認 | AC-007 | FR-018 | T013 | tests/test_recording.py、tests/test_twitcasting.py | 未検証（プリロール・通常の不連続を模擬。実配信の本編は未検証） |
+| TC-067 | プリロールのみで終わる場合の録画結果と、実配信でのプリロール除外、本編の先頭・末尾の収録確認 | AC-007 | FR-005、FR-018 | T009、T013 | tests/test_recording.py、tests/test_twitcasting.py | 未検証（プリロールのみの失敗扱いをローカル検証。公開配信1件でプリロールを除外し本編を保存。配信元と照合した先頭・末尾の完全性は未検証） |
 | TC-068 | 原本の§17 `TC` と§23 `AC` の欠落・重複・誤参照を注入し、要件追跡表と実行結果の網羅性検査が未対応を検出すること | AC-054 | FR-017 | T021 | tests/test_traceability.py | ローカル検証済み（下記ローカル実行証跡） |
 | TC-069 | Spec Kitの参照するアクティブFeatureを意図的に異なるFeatureへ向けた際、既存 `initial-live-recorder` を上書き・重複生成せず不一致を検出すること | AC-055 | FR-017 | T021 | tests/test_traceability.py | ローカル検証済み（下記ローカル実行証跡） |
 
@@ -235,7 +235,7 @@
 | RISK-09 | T008、T010、T012 | ローカル検証済み（SDK受信タスクの寿命・遅延・例外・停止を模擬） |
 | RISK-10 | T003、T009、T012 | ローカル検証済み（バイナリの選択・映像音声・最終メディア長） |
 | RISK-11 | T007、T009 | ローカル検証済み（採番・取消・回収・終了猶予の回帰） |
-| RISK-12 | T013、T020 | 未検証（プリロールと通常の不連続を模擬。本編の実測は未実施） |
+| RISK-12 | T013、T020 | 未検証（公開配信1件でプリロール除外と本編確定を確認。タグや素材の異なる複数配信、先頭・末尾の完全性を要検証） |
 | RISK-13 | T015、T016 | ローカル検証済み（旧失敗を伴う最新成功をWebとAPIで確認） |
 | RISK-14 | T011、T012、T015 | ローカル検証済み（0cue暫定・後着・競合・失敗時の保全） |
 | RISK-15 | T006、T018、T019、T020 | ローカル検証済み（CLI再起動後のインスタンス照合と内部ログ） |
@@ -250,6 +250,12 @@
 - Chromiumで主要7画面とコメントだけのセッション詳細を1440／1280／1024pxで表示。登録・編集ダイアログ・削除確認、Enter／Escapeとフォーカス復帰、コメント導線、ログ詳細・コピー操作・絞り込みの復帰、設定の保存と再読込を確認。1024pxで125／150／200%のCSS拡大による配信者フォームを操作。スクリーンショットを取得し、ダッシュボード・配信者フォーム・設定・ログ詳細・録画詳細の画面を目視した。Windowsのブラウザ実機、Noto Sans JPの実フォント表示、全画面のWCAG監査、全状態の組み合わせは未検証。
 - 原本起点の監査では `requirements.md` の24章、AC 55件、TC 69件、`docs/UI_UX.md` の受入34項目とリスク15件を独立に抽出して照合した。固定IDは維持し、証跡へ対応していない項目は未検証とした。
 - 仕様起点のConvergeでは、発見したSRT公開と設定版数、メディア診断、手動復元をT023〜T025へ追記して実装・再検証した。未解決の実機検証はT026に記録した。
+
+## 2026-11-24 ツイキャスのプリロール除外
+
+- `tests/test_recording.py` の `test_preroll_is_removed_at_an_init_change_without_discontinuity`、`test_preroll_name_does_not_drop_a_shared_program_init`、`test_preroll_retains_a_preceding_byte_range_when_the_next_offset_is_implicit` でHLSの先頭判定と本編の初期化・バイト範囲の保全を確認した。`test_twitcasting_preroll_matches_only_complete_audio_and_video_loops` と `test_twitcasting_keeps_program_across_an_initialization_change` で、既知素材の周期照合、プリロールだけで終わる場合の結果と、実FFmpegを使った本編確定を確認した。
+- 保存済みの実録画を一時SQLiteと一時録画先で再処理し、4.070秒のプリロールが採番前に除外され、90.069秒の本編だけがセグメント1に残ることを確認した。
+- 12:50:38 JSTに起動した修正後の録画プロセスで、12:51:15に開始した録画ジョブ6を読み取り専用で確認した。ジョブは `COMPLETED`、終了理由は `platform_end` で、確定した有効なセグメントは番号1の78.976秒のMP4のみ。録画欠損の記録は0件で、`ffprobe` がH.264映像とAAC音声を認識し、FFmpegの全編デコードは終了コード0、標準エラー出力は0バイトだった。配信元の終了時刻と参照映像を使った先頭・末尾の照合は未実施。
 
 ## 2026-11-24 UI再設計
 

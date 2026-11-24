@@ -2,17 +2,17 @@
 
 > **配置先**：`docs/IMPLEMENTATION_NOTES.md`
 >
-> **更新日**：2026-11-23
+> **更新日**：2026-11-24
 >
 > **対象**：`live-rec-lab`（WSL2 / Python 3.12 / TikTok LIVE・ツイキャスの初期試作）
 >
 > **性格**：実装試行の観測・失敗・検証結果を保存する**参考資料**。要件の正本ではない。
 >
-> **現行実装との関係**：本書は2026-11-23の試作記録である。現行の動作は `src/live_rec_lab/`、`docs/ARCHITECTURE.md`、`docs/LIMITATIONS.md`、`specs/001-initial-live-recorder/traceability.md` を見る。ツイキャスのプリロールは `.specify/bugs/twitcasting-preroll-only/` と `recording/` の現行実装が、この記録より新しい。
+> **現行実装との関係**：2026-11-23の試作記録を基にしています。ツイキャスのプリロールについて、現行実装での追試とその範囲を §6.4 に追記しました。現在の動作と検証範囲は [構成](ARCHITECTURE.md)、[制限と検証範囲](LIMITATIONS.md)、[要件追跡表](../specs/001-initial-live-recorder/traceability.md) を参照してください。
 
 ## 1. この文書の読み方
 
-本書は、2026-11-23に提供された `live-rec-lab.zip` の `.specify/bugs/` 下にある**12件の不具合記録（assessment / fix / test の36文書）**、および `specs/001-initial-live-recorder/` と `.specify/memory/constitution.md` を基にした再利用用メモである。ZIPにはアプリケーションの**ソースコード本体、稼働中のSQLite DB、動画実体、原本のHTTP/HLS応答**は含まれていない。したがって、以下の「実配信で確認」は、**添付された検証記録がそう報告している**という意味であり、今回ソースや録画を再実行・独立検証したことを意味しない。
+本書は、2026-11-23に提供された `live-rec-lab.zip` の `.specify/bugs/` 下にある**12件の不具合記録（assessment / fix / test の36文書）**、および `specs/001-initial-live-recorder/` と `.specify/memory/constitution.md` を基にした再利用用メモである。ZIPにはアプリケーションのソースコード、稼働中のSQLite DB、動画実体、原本のHTTP/HLS応答が含まれていなかった。試作の実配信結果は添付の検証記録を根拠とし、現行の録画ファイルを直接照合した結果は §6.4 に示す。
 
 文書間で競合する場合は `docs/prompts/master.md` に定める優先順位（`requirements.md` → `docs/UI_UX.md` → `.specify/memory/constitution.md` → `docs/design/` → Feature仕様 → 5つの運用補助資料（`docs/ARCHITECTURE.md`、`CONFIGURATION.md`、`INSTALL_WSL2.md`、`TROUBLESHOOTING.md`、`LIMITATIONS.md`）→ **本書** → `README.md`）に従う。本書の対策案には**その環境で成功した技法**と**まだ一般化できない仮説**が混在する。バイナリの絶対パス、閾値、バージョン、ライブラリの戻り値の形は、次回の実装環境で再検証する。
 
@@ -132,6 +132,13 @@
 - 本編を録れず短いセグメントしか無いと、その長さを基準とするSRTが0cueになることがある。この場合は`generated`の空ファイルではなく、**対応する時間帯に字幕対象コメントなし＝`skipped`**と表す。ただし**そもそもコメントを収集できていない**場合は別の取得失敗・未収集として表示する。
 - 録画ジョブがまだ動いていることを、配信がLIVEである証拠にしない。オフラインが確定し猶予が過ぎれば再接続を止める。
 - 有効動画があっても、その後に再接続失敗・欠損がある場合はジョブやセッションの**不完全性を残す**。成功ファイルの存在は全区間の成功を意味しない。
+
+### 6.4 現行実装での再発と検証（2026-11-24）
+
+- 12:13 JST開始の実録画では、初期化ファイルとメディアの取得がHTTP 200でも、FFmpegが `Invalid NAL unit size` を出して終了コード183で中断し、2.104秒だけが残った。再接続だけでは同じ入力の不整合を繰り返すため、初期化情報が変わる境界でFFmpeg入力を分けた。12:23 JST開始の実録画では、6.037秒のプリロールと79.872秒の本編をそれぞれ保存できた。これは本編の取得を確認した段階の記録。 [再発記録](../.specify/bugs/twitcasting-preroll-only/recurrence.md)・[当時の検証](../.specify/bugs/twitcasting-preroll-only/test.md)
+- 12:38 JST開始の実録画では、6秒版全体との照合を導入した後も4.070秒が残った。2.104秒、4.070秒、6.037秒の保存済み素材をパケット単位で照合すると、いずれも同一の映像・音声をそれぞれ1回、2回、3回繰り返していた。コンテナ固有の付加情報を除いた映像・音声のパケット列を1周期ずつ照合し、両方が同じ回数だけ繰り返される場合に限り採番前に破棄することで、長さの異なる既知のプリロールを扱える。実録画から取り出した4.070秒のプリロールと90.069秒の本編を一時DBで再処理し、本編だけがセグメント1に残ることを確認した。
+- 参照実装 `fluxrozin/live-recorder` は、プレイヤー向けtc-hlsで `preroll-` を持つメディアをFFmpegに渡す前に除外し、最初の本編直前の不連続タグを処理する。本プロジェクトではこの事前除外を公式API由来のHLSに適用し、明示マーカーと初期化情報を組み合わせて境界を判断する。マーカーのない素材は採番前の内容照合で補う。 [参照した実装](https://github.com/fluxrozin/live-recorder/blob/ae6df769a60840cd555003ff88ec681925f92c06/src/live_recorder/recording/tc_hls.py#L68-L158)
+- 12:50 JSTに修正後のプロセスが起動した後の実配信では、78.976秒の動画だけがセグメント1に残り、ジョブは `COMPLETED`、録画欠損は0件だった。保存ファイルのH.264映像・AAC音声を最後までデコードできた。配信元と突き合わせた先頭・末尾の完全性や複数パターンでの再現性は未検証。 [最新の証跡](../specs/001-initial-live-recorder/traceability.md#2026-11-24-ツイキャスのプリロール除外)
 
 ## 7. UIで露呈した「観測結果の誤読」
 
