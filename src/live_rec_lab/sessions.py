@@ -142,6 +142,15 @@ def add_gap(conn: Connection, session_id: int, job_type: str, started_at: str | 
         created_at=utcnow()))
 
 
+def finish_interruption(conn: Connection, session_id: int, job_type: str, started_at: str, *, confirmed: bool) -> None:
+    last_live = conn.execute(select(stream_sessions.c.last_seen_live_at).where(
+        stream_sessions.c.id == session_id)).scalar_one()
+    # 終了確認が遅れても、切断後の配信継続を確認できなければ末尾の空試行を欠損として確定しない。
+    if not confirmed or (last_live and last_live > started_at):
+        add_gap(conn, session_id, job_type, started_at, None, "interrupted",
+                start_basis="approximate", end_basis="unknown")
+
+
 # ---------------------------------------------------------------- budgets (§6.5.2)
 def budget_for(conn: Connection, session_id: int, kind: str, max_extra: int, *, new_generation: bool = False) -> int:
     """最新世代の予算を返す。設定値は新世代の作成時に固定し、再起動・再検知で復活させない。"""

@@ -14,7 +14,7 @@ import logging
 import re
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
@@ -337,6 +337,7 @@ class TwitCastingComments:
         self.last_id = 0
         self.unreached = 0
         self._closed = False
+        self.on_ready: Callable[[], Awaitable[None]] | None = None
         self.anon = AnonymousNumbers(adapter, str(status.stream_id)) if getattr(adapter, "anonymous_ws", True) else None
 
     def __aiter__(self):
@@ -356,6 +357,9 @@ class TwitCastingComments:
         if code != 200 or body is None:
             raise RuntimeError(f"comments API error: HTTP {code}")
         items = body.get("comments")
+        if isinstance(items, list) and self.on_ready is not None:
+            await self.on_ready()
+            self.on_ready = None
         return [c for c in items if isinstance(c, dict)] if isinstance(items, list) else []
 
     async def _gen(self):

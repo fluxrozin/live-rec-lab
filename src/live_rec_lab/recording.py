@@ -46,6 +46,8 @@ class AttemptResult:
     reason: str | None = None
     ended_by_stop: bool = False
     got_data: bool = False
+    first_media_at: str | None = None
+    capture_ended_at: str | None = None
 
 
 @dataclass
@@ -87,7 +89,7 @@ class Recorder:
         self.final_status = "PENDING"
         self.attempts = 0
         self.kept_segments = 0
-        self._last_end: str | None = None
+        self.interrupted_at: str | None = None
 
     async def stop(self, reason: str) -> None:
         self.stop_reason = self.stop_reason or reason
@@ -116,17 +118,24 @@ class Recorder:
                 await asyncio.to_thread(self._note, "retry_exhausted")
                 break
             self.attempts += 1
-            if self._last_end:
-                await asyncio.to_thread(self._gap, self._last_end, utcnow(), "recording_reconnect")
+            attempt_started_at = utcnow()
             res = await self._attempt()
-            self._last_end = utcnow()
             if res.kind == "kept":
                 self.kept_segments += 1
+                resumed_at = res.first_media_at or attempt_started_at
+                if self.interrupted_at and self.interrupted_at < resumed_at:
+                    await asyncio.to_thread(self._gap, self.interrupted_at, resumed_at)
+                self.interrupted_at = None
+            else:
+                self.interrupted_at = self.interrupted_at or attempt_started_at
             if self.stop_requested.is_set() or res.ended_by_stop:
                 outcome = "COMPLETED" if res.kind == "kept" or self.kept_segments else "CANCELLED"
                 if self.stop_reason == "manual":
                     await asyncio.to_thread(self._manual_stop)
                 break
+            # 有効な区間の直後だけ新しい中断を始める。空試行を挟んでも最初の時刻を保つ。
+            if res.kind == "kept":
+                self.interrupted_at = res.capture_ended_at or attempt_started_at
             if res.kind == "spec_unavailable":
                 await asyncio.to_thread(self._suppress, "limited")
                 outcome = "FAILED" if self.kept_segments == 0 else "PARTIAL"
@@ -181,6 +190,7 @@ class Recorder:
         started = time.monotonic()
         first_data: float | None = None
         first_data_at: str | None = None
+        last_growth_at: str | None = None
         last_size, last_growth = 0, started
         stalled = False
         while proc.returncode is None:
@@ -188,8 +198,9 @@ class Recorder:
             size = raw.stat().st_size if raw.exists() else 0
             now = time.monotonic()
             if size > last_size:
+                last_growth_at = utcnow()
                 if first_data is None and size > 0:
-                    first_data, first_data_at = now, utcnow()
+                    first_data, first_data_at = now, last_growth_at
                 last_size, last_growth = size, now
             limit = rc.policy.stall_timeout_s if first_data else rc.policy.start_timeout_s
             if now - (last_growth if first_data else started) > limit:
@@ -199,6 +210,7 @@ class Recorder:
                 break
         if proc.returncode is None:
             await terminate_group(proc, rc.policy.stop_grace_s)
+        capture_ended_at = (last_growth_at if stalled else None) or utcnow()
         await drain_task
         self.current = None
         stderr_tail = b"".join(tail)[-600:].decode("utf-8", "replace")
@@ -212,6 +224,7 @@ class Recorder:
         res = await asyncio.to_thread(self._finalize, seg_id, raw, directory, spec, first_data_at, got, reason,
                                       stderr_tail, st)
         res.exit_code, res.ended_by_stop, res.got_data = proc.returncode, by_stop, got and res.kind != "preroll"
+        res.first_media_at, res.capture_ended_at = first_data_at, capture_ended_at
         res.reason = res.reason or reason
         hook = getattr(rc.adapter, "record_result", None)
         if hook is not None and not by_stop and res.kind != "preroll":
@@ -337,9 +350,10 @@ class Recorder:
         with self.rc.engine.begin() as conn:
             return sessions.add_pending_segment(conn, self.rc.job_id, self.rc.session["id"], engine, tmp, attempt_id)
 
-    def _gap(self, a: str, b: str, reason: str) -> None:
+    def _gap(self, a: str, b: str) -> None:
         with self.rc.engine.begin() as conn:
-            sessions.add_gap(conn, self.rc.session["id"], "recording", a, b, reason)
+            sessions.add_gap(conn, self.rc.session["id"], "recording", a, b, "recording_reconnect",
+                             start_basis="approximate", end_basis="approximate")
 
     def _suppress(self, reason: str) -> None:
         with self.rc.engine.begin() as conn:

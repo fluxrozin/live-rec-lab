@@ -318,12 +318,14 @@ class Supervisor:
         elif not want_rec and rec_alive:
             await run.recorder.stop("config_off")
             await run.rec_task
+            await self._finish_interruption(run, "recording", run.recorder, confirmed=False)
         # コメント
         cmt_alive = run.collector is not None and not run.collector.done
         if want_cmt and not cmt_alive and (run.collector is None or run.collector.final_status is None):
             await self._start_comments(run, streamer, adapter, st)
         elif not want_cmt and cmt_alive:
             await run.collector.stop("config_off")
+            await self._finish_interruption(run, "comments", run.collector, confirmed=False)
 
     async def _start_recording(self, run: SessionRun, streamer: dict, adapter, st: dict) -> None:
         job_id, budget_id = await asyncio.to_thread(self._new_rec_job, run.session_id, int(st["reconnect_max_attempts"]))
@@ -421,8 +423,10 @@ class Supervisor:
             return "noop"
         await asyncio.to_thread(self._new_generation, session_id, kind, int(st["reconnect_max_attempts"]))
         if scope == "recording":
+            await self._finish_interruption(run, "recording", run.recorder, confirmed=False)
             run.recorder = None
         else:
+            await self._finish_interruption(run, "comments", run.collector, confirmed=False)
             run.collector = None
         await self.reconcile(run)
         return "resumed"
@@ -440,7 +444,21 @@ class Supervisor:
         await run.recorder.stop("manual")
         return True
 
-    async def _close_jobs(self, run: SessionRun) -> None:
+    async def _finish_interruption(self, run: SessionRun, job_type: str,
+                                   job: recording.Recorder | comments_mod.CommentCollector | None,
+                                   *, confirmed: bool) -> None:
+        if job is None or job.interrupted_at is None:
+            return
+        started_at = job.interrupted_at
+
+        def persist() -> None:
+            with self.ctx.engine.begin() as conn:
+                sessions.finish_interruption(conn, run.session_id, job_type, started_at, confirmed=confirmed)
+
+        await asyncio.to_thread(persist)
+        job.interrupted_at = None
+
+    async def _close_jobs(self, run: SessionRun, *, confirmed: bool = False) -> None:
         run.closing = True
         if run.recorder is not None:
             await run.recorder.stop(run.recorder.stop_reason or "session_end")
@@ -448,11 +466,13 @@ class Supervisor:
             await asyncio.gather(run.rec_task, return_exceptions=True)
         if run.collector is not None and not run.collector.done:
             await run.collector.stop("session_end")
+        await self._finish_interruption(run, "recording", run.recorder, confirmed=confirmed)
+        await self._finish_interruption(run, "comments", run.collector, confirmed=confirmed)
 
     async def _end_session(self, run: SessionRun, reason: str) -> None:
         if run.closing:
             return
-        await self._close_jobs(run)
+        await self._close_jobs(run, confirmed=reason == "confirmed")
         await asyncio.to_thread(self._converge, run.session_id, reason)
         self.runs.pop(run.session_id, None)
         await self.generate_session_srt(run.session_id)

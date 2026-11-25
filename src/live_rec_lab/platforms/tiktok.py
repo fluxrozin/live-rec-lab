@@ -13,6 +13,7 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 import httpx
@@ -171,6 +172,7 @@ class TikTokComments:
         self.adapter, self.account, self.status = adapter, account, status
         self._client = None
         self.discarded_mismatch = 0
+        self.on_ready: Callable[[], Awaitable[None]] | None = None
 
     def __aiter__(self):
         return self._gen()
@@ -204,6 +206,7 @@ class TikTokComments:
             "httpx_kwargs": {"event_hooks": {"request": [hook]}}, "signer_kwargs": {"sign_api_key": key}})
         self._client = client
         q: asyncio.Queue = asyncio.Queue(maxsize=5000)
+        ready = object()
         state: dict = {"ended": False, "connected": False, "room_id": None}
 
         @client.on(ConnectEvent)
@@ -215,6 +218,8 @@ class TikTokComments:
             log.info("TikTokLive 接続イベント: Room ID %s（監視対象の配信IDと%s）", ev.room_id, "一致" if ok else "不一致/確認不能")
             if not ok:  # 別配信・確認不能のイベントは保存せず、接続を破棄して再確認する
                 await q.put(RuntimeError("接続先の配信IDが監視対象と一致しない/確認できません"))
+            else:
+                await q.put(ready)
             state["connected"] = True
 
         @client.on(LiveEndEvent)
@@ -260,12 +265,20 @@ class TikTokComments:
                         return
                     if isinstance(item, Exception):
                         raise item
-                    yield item
+                    if item is ready:
+                        if self.on_ready is not None and not state["ended"]:
+                            await self.on_ready()
+                    else:
+                        yield item
                 else:
                     get.cancel()
                     exc = task.exception() if not task.cancelled() else None
                     while not q.empty():  # 受信タスク終了後も残件を処理（遅延受信の取りこぼし防止）
                         item = q.get_nowait()
+                        if item is None:
+                            break
+                        if isinstance(item, Exception):
+                            raise item
                         if isinstance(item, CommentEvent):
                             yield item
                     if exc is not None:

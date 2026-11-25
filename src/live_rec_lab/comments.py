@@ -45,6 +45,7 @@ class CommentCollector:
         self._reader: asyncio.Task | None = None
         self.end_reason: str | None = None
         self.final_status: str | None = None
+        self.interrupted_at: str | None = None
 
     # ---- lifecycle
     async def start(self) -> None:
@@ -88,15 +89,32 @@ class CommentCollector:
                     return
                 if kind == "extra":
                     self.stats["reconnects"] += 1
-            gap_start = utcnow() if attempt > 1 else None
+            attempt_started_at = utcnow()
             stream = None
+            connected = False
+
+            async def on_ready() -> None:
+                nonlocal connected
+                if connected:
+                    return
+                resumed_at = utcnow()
+                interrupted_at = self.interrupted_at
+                self.interrupted_at = None
+                try:
+                    await asyncio.to_thread(self._connected, interrupted_at, resumed_at)
+                except Exception:
+                    self.interrupted_at = interrupted_at
+                    raise
+                connected = True
+
             try:
                 stream = self.factory()
-                await asyncio.to_thread(self._set_job, status="COLLECTING")
-                if gap_start:
-                    await asyncio.to_thread(self._gap, self._last_gap_start or gap_start, utcnow(), "reconnected")
-                    self._last_gap_start = None
+                if hasattr(stream, "on_ready"):
+                    stream.on_ready = on_ready
+                await asyncio.to_thread(self._set_job, status="CONNECTING")
                 async for ev in stream:
+                    if not connected:
+                        await on_ready()
                     self.stats["received"] += 1
                     self.last_received = utcnow()
                     try:
@@ -122,12 +140,13 @@ class CommentCollector:
                 self.end_reason = "receiver_error"
                 log.warning("コメント受信が終了: %s", self.last_error, extra={"session_id": self.session_id})
             finally:
+                if not self._stop.is_set() and self.end_reason != "restricted":
+                    self.interrupted_at = self.interrupted_at or (utcnow() if connected else attempt_started_at)
                 if stream is not None:
                     try:
                         await stream.aclose()
                     except Exception:
                         pass
-            self._last_gap_start = utcnow()
             await asyncio.to_thread(self._set_job, status="RECONNECTING")
             self._fail_streak = self._fail_streak + 1 if self.end_reason in ("receiver_error",) else 0
             wait = min(120.0, self.retry_wait * (2 ** min(self._fail_streak, 6)))  # 外部が拒否/空応答のとき連打しない
@@ -137,7 +156,6 @@ class CommentCollector:
             except TimeoutError:
                 pass
 
-    _last_gap_start: str | None = None
     _fail_streak = 0
 
     # ---- writer
@@ -225,10 +243,12 @@ class CommentCollector:
         with self.engine.begin() as conn:
             sessions.update_job(conn, comment_collection_jobs, self.job_id, **vals)
 
-    def _gap(self, start: str, end: str, reason: str) -> None:
+    def _connected(self, start: str | None, end: str) -> None:
         with self.engine.begin() as conn:
-            sessions.add_gap(conn, self.session_id, "comments", start, end, reason, start_basis="approximate",
-                             end_basis="approximate")
+            sessions.update_job(conn, comment_collection_jobs, self.job_id, status="COLLECTING")
+            if start and start < end:
+                sessions.add_gap(conn, self.session_id, "comments", start, end, "reconnected",
+                                 start_basis="approximate", end_basis="approximate")
 
     def _finish(self) -> None:
         if self.stats["save_failed"] or not self.counts_complete or self.end_reason in ("receiver_error", "retry_exhausted", "restricted"):
@@ -240,5 +260,3 @@ class CommentCollector:
         with self.engine.begin() as conn:
             sessions.update_job(conn, comment_collection_jobs, self.job_id, status=status, finished_at=utcnow(),
                                 last_error=self.last_error or (None if status == "COMPLETED" else self.end_reason))
-            if self._last_gap_start and not self._stop.is_set():
-                pass
