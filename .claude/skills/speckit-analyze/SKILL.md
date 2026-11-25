@@ -11,6 +11,7 @@ user-invocable: true
 disable-model-invocation: false
 ---
 
+
 ## User Input
 
 ```text
@@ -22,7 +23,6 @@ You **MUST** consider the user input before proceeding (if not empty).
 ## Pre-Execution Checks
 
 **Check for extension hooks (before analysis)**:
-
 - Check if `.specify/extensions.yml` exists in the project root.
 - If it exists, read it and look for entries under the `hooks.before_analyze` key
 - If the YAML cannot be parsed or is invalid, do not skip silently: tell the user that `.specify/extensions.yml` could not be read (include the parser error) and that no hooks were checked, including any mandatory (`optional: false`) hooks registered there, then continue normally
@@ -185,21 +185,21 @@ Output a Markdown report (no file writes) with the following structure:
 
 ## Specification Analysis Report
 
-| ID  | Category    | Severity | Location(s)      | Summary                      | Recommendation                       |
-| --- | ----------- | -------- | ---------------- | ---------------------------- | ------------------------------------ |
-| A1  | Duplication | HIGH     | spec.md:L120-134 | Two similar requirements ... | Merge phrasing; keep clearer version |
+| ID | Category | Severity | Location(s) | Summary | Recommendation |
+|----|----------|----------|-------------|---------|----------------|
+| A1 | Duplication | HIGH | spec.md:L120-134 | Two similar requirements ... | Merge phrasing; keep clearer version |
 
 (Add one row per finding; generate stable IDs prefixed by category initial.)
 
 **Coverage Summary Table:**
 
 | Requirement Key | Has Task? | Task IDs | Notes |
-| --------------- | --------- | -------- | ----- |
+|-----------------|-----------|----------|-------|
 
 **Constrained-Field Coverage (when applicable):**
 
 | Field (`Entity.field`) | Canonical Location | Implementing Task IDs | Coverage / Consistency Notes |
-| ---------------------- | ------------------ | --------------------- | ---------------------------- |
+|------------------------|--------------------|-----------------------|------------------------------|
 
 Use the existing finding table for field findings, including source locations and actionable recommendations. Field findings share the 50-finding limit and overflow summary; do not change the existing requirement coverage denominator or FR/SC coverage table semantics.
 
@@ -231,7 +231,6 @@ Ask the user: "Would you like me to suggest concrete remediation edits for the t
 ### 9. Check for extension hooks
 
 After reporting, check if `.specify/extensions.yml` exists in the project root.
-
 - If it exists, read it and look for entries under the `hooks.after_analyze` key
 - If the YAML cannot be parsed or is invalid, do not skip silently: tell the user that `.specify/extensions.yml` could not be read (include the parser error) and that no hooks were checked, including any mandatory (`optional: false`) hooks registered there, then continue normally
 - Filter out hooks where `enabled` is explicitly `false`. Treat hooks without an `enabled` field as enabled by default.
