@@ -230,6 +230,24 @@ async def stop_session(request: Request, session_id: int):
     return _json({"accepted": True}, 202)
 
 
+@router.post("/sessions/{session_id}/resume")
+async def resume_session(request: Request, session_id: int):
+    data = {}
+    if request.headers.get("content-length", "0") != "0":
+        data = await read_json(request)
+    if data.get("confirm") is not True:
+        raise ApiError(422, "VALIDATION_ERROR", "confirm: true が必要です")
+    scope = data.get("scope", "recording")
+    sup = _sup(request)
+    if sup is None:
+        raise ApiError(503, "UNAVAILABLE", "監督が起動していません")
+    try:
+        result = await sup.resume(session_id, scope)
+    except ValueError as exc:
+        raise ApiError(409, "CONFLICT", str(exc)) from exc
+    return _json({"result": result, "scope": scope}, 202 if result == "resumed" else 200)
+
+
 # ------------------------------------------------------------------ comments
 @router.get("/comments")
 def comments(request: Request):

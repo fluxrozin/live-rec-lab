@@ -75,5 +75,7 @@
 - 年齢制限の判定: 旧「年齢制限」断定は誤検知（上記）。正規の接続手順で room info が取得できない（`AgeRestrictedError`）場合のみアクセス制限として録画・コメントを停止する（参照実装と同じ扱い）。
 - Euler無料キーでTikTokチャットは取得できる（実測）。
 
+- **明示再開API**（`POST /api/v1/sessions/{id}/resume`、scope=recording/comments）を追加（要求§6.5.2〜3、設計§17）。手動停止・枯渇後に新しい予算世代で再開。画面はダッシュボードのアクティブセッションにボタン。pytestで確認。
+
 ## 再開点
 Phase 1〜8 の実装を完了（UI=A案）。次: 利用者から実配信の期間・終了条件の通知を受けたら、`uv run live-rec-lab start --dev --allow-live` で TikTok `yanaks64` / ツイキャス `maoki_it` を実測し、tasks.md の保留行と docs/manual.md §7 を更新する。

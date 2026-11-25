@@ -348,6 +348,39 @@ class Supervisor:
                                f"アクセス制限（{reason}）が確認されたため、録画とコメント収集を停止しました。制限は回避しません",
                                session_id)
 
+    async def resume(self, session_id: int, scope: str = "recording") -> str:
+        """明示再開（要求§6.5.2〜3）: 手動停止・再試行枯渇・上限到達の同一配信に新しい試行予算世代で再開する。
+
+        稼働中（LIVE）の同一セッションだけが対象。制限（restricted）・確認済み終了・削除中は再開しない。
+        返値: 'resumed' / 'noop'（既に稼働中）。条件を満たさない場合は ValueError。
+        """
+        run = self.runs.get(session_id)
+        if run is None or run.closing:
+            raise ValueError("稼働中のセッションではありません（同一LIVEの確認が必要です）")
+        if scope not in ("recording", "comments"):
+            raise ValueError("scope は recording / comments")
+        kind = scope
+        sup = await asyncio.to_thread(self._suppressed, session_id, kind)
+        if sup == "restricted":
+            raise ValueError("アクセス制限が解除されたことを確認できるまで再開できません")
+        st = await asyncio.to_thread(self.settings)
+        alive = (run.rec_task is not None and not run.rec_task.done()) if scope == "recording" else (
+            run.collector is not None and not run.collector.done)
+        if alive:
+            return "noop"
+        await asyncio.to_thread(self._new_generation, session_id, kind, int(st["reconnect_max_attempts"]))
+        if scope == "recording":
+            run.recorder = None
+        else:
+            run.collector = None
+        await self.reconcile(run)
+        return "resumed"
+
+    def _new_generation(self, session_id: int, kind: str, max_extra: int) -> None:
+        with self.ctx.engine.begin() as conn:
+            sessions.budget_for(conn, session_id, kind, max_extra, new_generation=True)
+            sessions.add_event(conn, "session.resumed", "info", f"{'録画' if kind == 'recording' else 'コメント収集'}を明示再開しました（新しい試行予算）", session_id)
+
     async def stop_recording(self, session_id: int) -> bool:
         """手動停止: 同じ配信を自動再開しない（停止指示を保持）。"""
         run = self.runs.get(session_id)

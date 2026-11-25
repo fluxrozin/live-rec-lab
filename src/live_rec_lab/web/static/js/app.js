@@ -95,6 +95,15 @@
         });
       });
     }
+    if (a === "resume") {
+      var label = t.dataset.scope === "recording" ? "録画" : "コメント収集";
+      confirmDialog(label + "を再開", "同じ配信で" + label + "を再開します。新しい試行予算で開始します。", "再開").then(function (ok) {
+        if (!ok) return;
+        api("POST", "/api/v1/sessions/" + t.dataset.id + "/resume", { confirm: true, scope: t.dataset.scope }).then(function (r) {
+          if (r.ok) toast(r.body.result === "noop" ? "既に稼働中です" : "再開を受け付けました"); else toast(errText(r), true);
+        });
+      });
+    }
     if (a === "delete-archive") {
       confirmDialog("アーカイブを削除", "「" + t.dataset.name + "」の動画・全字幕・コメント・履歴を一括で削除します。取り消せません。", "削除する").then(function (ok) {
         if (!ok) return;

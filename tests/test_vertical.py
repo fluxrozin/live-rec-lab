@@ -173,3 +173,33 @@ def test_late_comments_are_reflected_after_reconvergence(ctx):
     with ctx.engine.begin() as conn:
         srt_path = conn.execute(select(recording_segments.c.srt_path)).scalar()
     assert srt_path and "遅れて届いた" in (ctx.env.recording_root / srt_path).read_text("utf-8")
+
+
+def test_manual_stop_then_explicit_resume(ctx):
+    """手動停止は自動再開されず、明示再開（新しい予算世代）でだけ新しい録画を始める。"""
+    from live_rec_lab.db.models import retry_budgets
+
+    async def go():
+        with ctx.engine.begin() as conn:
+            st = streamers.register(conn, streamers.StreamerInput("tiktok", "resume_one", None, True, True, False))
+        ad = FakeAdapter(seconds=30)
+        sup = Supervisor(ctx, {"tiktok": ad}, SupervisorPolicy(
+            recording=recording.Policy(poll_s=0.2, start_timeout_s=20, stall_timeout_s=10, backoff_base_s=0.2)))
+        await sup.handle_status(st, await ad.check("resume_one"))
+        run = next(iter(sup.runs.values()))
+        await asyncio.sleep(2.5)
+        assert await sup.stop_recording(run.session_id)
+        await asyncio.wait_for(run.rec_task, 30)
+        await sup.handle_status(st, await ad.check("resume_one"))  # 同じ配信の監視では自動再開しない
+        await asyncio.sleep(0.5)
+        calls_before = ad.record_calls
+        assert run.rec_task.done()
+        assert await sup.resume(run.session_id, "recording") == "resumed"
+        await asyncio.sleep(2.0)
+        assert ad.record_calls == calls_before + 1 and not run.rec_task.done()
+        await sup.stop()
+
+    asyncio.run(go())
+    with ctx.engine.begin() as conn:
+        gens = [r[0] for r in conn.execute(select(retry_budgets.c.generation).where(retry_budgets.c.kind == "recording"))]
+    assert sorted(gens) == [1, 2]

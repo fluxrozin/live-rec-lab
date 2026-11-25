@@ -7,7 +7,7 @@
   <tr><td><div class="u-cell2"><b><a href="/recordings/{{ s.id }}">{{ s.display_name }}</a></b><span class="u-sub">{{ ui.tag(s.platform) }} @{{ s.platform_user_id }}{% if s.title %} · {{ s.title }}{% endif %}</span></div></td>
     <td><div class="u-row u-wrap">{{ ui.session_badges(s) }}</div></td>
     <td class="is-right u-num">{{ s.detected_at|ago }}</td><td class="is-right u-num">{{ s.comment_count }}</td><td class="is-right u-num">{{ s.size|size }}</td>
-    <td class="is-right">{% if s.recording %}<button class="c-btn c-btn--sm c-btn--danger" data-action="stop-recording" data-id="{{ s.id }}">録画を停止</button>{% endif %}</td></tr>
+    <td class="is-right"><span class="u-row" style="justify-content:flex-end">{% if s.recording %}<button class="c-btn c-btn--sm c-btn--danger" data-action="stop-recording" data-id="{{ s.id }}">録画を停止</button>{% elif s.status == "LIVE" %}<button class="c-btn c-btn--sm" data-action="resume" data-scope="recording" data-id="{{ s.id }}">録画を再開</button>{% endif %}{% if not s.collecting and s.status == "LIVE" %}<button class="c-btn c-btn--sm" data-action="resume" data-scope="comments" data-id="{{ s.id }}">コメント収集を再開</button>{% endif %}</span></td></tr>
   {% endfor %}</tbody></table></div>
   {% else %}{{ ui.empty("現在配信中のアカウントはありません", "配信開始を検知すると、録画とコメント収集の状態がここに表示されます。") }}{% endif %}
 </div>
