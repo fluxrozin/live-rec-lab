@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from live_rec_lab.external import Budget, ExternalDenied, ExternalGate, host_allowed
+from live_rec_lab.external import Budget, ExternalDenied, ExternalGate, host_allowed, http_timeout_reason
 from live_rec_lab.platforms.base import (
     ERROR,
     LIVE,
@@ -110,8 +110,8 @@ class TikTokAdapter:
             r = await self._client.get(ROOM_API, params=params, headers={"Referer": f"https://www.tiktok.com/@{account}/live"})
         except ExternalDenied:
             raise
-        except httpx.TimeoutException:
-            return LiveStatus(UNKNOWN, reason="timeout")
+        except httpx.TimeoutException as exc:
+            return LiveStatus(UNKNOWN, reason=http_timeout_reason(exc))
         except httpx.ConnectError as exc:
             return LiveStatus(UNKNOWN, reason="dns_error" if "Name or service" in str(exc) else "connect_error")
         except httpx.HTTPError as exc:

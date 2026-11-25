@@ -20,6 +20,7 @@ from live_rec_lab.platforms.base import ERROR, LIVE, OFFLINE, UNKNOWN, LiveStatu
 from live_rec_lab.runtime import utcnow
 
 log = logging.getLogger("live_rec_lab.supervisor")
+MONITOR_TIMEOUT_BACKOFF_S = (15.0, 30.0, 60.0)
 
 
 @dataclass
@@ -60,6 +61,7 @@ class Supervisor:
         self.stopping = False
         self.last_check: dict[int, float] = {}
         self.diag: dict[int, dict] = {}  # streamer_id -> 直近の監視診断
+        self._checking: set[int] = set()
         self._check_tasks: set[asyncio.Task] = set()
         self._closing_tasks: set[asyncio.Task] = set()
         from live_rec_lab.speech import SpeechService
@@ -164,16 +166,29 @@ class Supervisor:
             rate = float(st[f"{name}_monitor_rate"])
             nxt = now + 60.0 / rate * random.uniform(0.9, 1.1)
             targets = await asyncio.to_thread(self._targets, name)
-            if not targets:
+            target = self._next_monitor_target(targets, now)
+            if target is None:
                 continue
-            target = min(targets, key=lambda s: self.last_check.get(s["id"], 0.0))
-            self.last_check[target["id"]] = now
+            sid = target["id"]
+            self.last_check[sid] = now
             if getattr(adapter, "external", True) and not self.ctx.gate.allow_live:
-                self.diag[target["id"]] = {"state": "DISABLED", "reason": "external_denied", "at": utcnow()}
+                self.diag[sid] = {"state": "DISABLED", "reason": "external_denied", "at": utcnow()}
                 continue
-            t = asyncio.create_task(self._check_one(adapter, target), name=f"check-{target['id']}")
+            self._checking.add(sid)
+            t = asyncio.create_task(self._check_one(adapter, target), name=f"check-{sid}")
             self._check_tasks.add(t)
             t.add_done_callback(self._check_tasks.discard)
+
+    def _next_monitor_target(self, targets: list[dict], now: float) -> dict | None:
+        active_ids = {run.streamer_id for run in self.runs.values()}
+        eligible = []
+        for target in targets:
+            sid = target["id"]
+            if sid in self._checking:
+                continue
+            if sid in active_ids or now >= self.diag.get(sid, {}).get("retry_after_mono", 0.0):
+                eligible.append(target)
+        return min(eligible, key=lambda s: self.last_check.get(s["id"], 0.0), default=None)
 
     def _targets(self, platform: str) -> list[dict]:
         with self.ctx.engine.begin() as conn:
@@ -185,19 +200,55 @@ class Supervisor:
         except ExternalDenied as exc:
             status = LiveStatus(UNKNOWN, reason=f"external_denied: {exc}")
         except TimeoutError:
-            status = LiveStatus(UNKNOWN, reason="timeout")
+            status = LiveStatus(UNKNOWN, reason="timeout_check")
         except Exception as exc:  # 1人の失敗が全体へ波及しない
-            status = LiveStatus(ERROR, reason=f"{type(exc).__name__}: {exc}"[:200])
+            status = LiveStatus(ERROR, reason=type(exc).__name__)
+        finally:
+            # 監視要求のみを直列化し、録画確定などの終了処理は次の監視を待たせない。
+            self._checking.discard(streamer["id"])
         await self.handle_status(streamer, status)
 
     # ------------------------------------------------------------ status handling
-    async def handle_status(self, streamer: dict, status: LiveStatus) -> None:
+    async def _record_monitor_diagnostic(self, streamer: dict, status: LiveStatus) -> None:
         sid = streamer["id"]
         prev = self.diag.get(sid, {})
-        self.diag[sid] = {"state": status.state, "reason": status.reason, "at": utcnow()}
-        if status.state in (UNKNOWN, ERROR) and prev.get("reason") != status.reason:
-            await asyncio.to_thread(self._event, "monitor.unhealthy", "warning",
-                                    f"{streamer['display_name']}: 監視が{status.state}（{status.reason}）")
+        at = utcnow()
+        current = {"state": status.state, "reason": status.reason, "at": at}
+        if status.reason in ("budget_wait", "rate_limited_wait"):
+            self.diag[sid] = {**prev, **current}
+            return
+        self.diag[sid] = current
+
+        subject = {"streamer_id": sid, "platform": streamer["platform"]}
+        name = streamer["display_name"]
+        if status.state in (UNKNOWN, ERROR):
+            reason = status.reason or "unknown"
+            timed_out = reason == "timeout" or reason.startswith("timeout_")
+            failure_count = prev.get("failure_count", 0) + 1
+            timeout_count = prev.get("timeout_count", 0) + 1 if timed_out else 0
+            current.update(failure_count=failure_count, timeout_count=timeout_count,
+                           first_failure_at=prev.get("first_failure_at", at), last_failure_at=at,
+                           last_failure_reason=reason, warned=prev.get("warned", False))
+            if timeout_count >= 2:
+                step = min(timeout_count - 2, len(MONITOR_TIMEOUT_BACKOFF_S) - 1)
+                current["retry_after_mono"] = asyncio.get_running_loop().time() + MONITOR_TIMEOUT_BACKOFF_S[step]
+            if not current["warned"] and (not timed_out or failure_count >= 2):
+                current["warned"] = True
+                await asyncio.to_thread(self._event, "monitor.unhealthy", "warning",
+                                        f"{name}の監視が{status.state}（{reason}、連続{failure_count}回）",
+                                        metadata={**subject, "reason": reason, "failure_count": failure_count,
+                                                  "first_failure_at": current["first_failure_at"], "last_failure_at": at})
+        elif prev.get("warned") and status.state in (LIVE, OFFLINE):
+            await asyncio.to_thread(self._event, "monitor.recovered", "info",
+                                    f"{name}の監視が回復（確認失敗{prev['failure_count']}回）",
+                                    metadata={**subject, "reason": prev["last_failure_reason"],
+                                              "failure_count": prev["failure_count"], "recovered_at": at,
+                                              "first_failure_at": prev["first_failure_at"],
+                                              "last_failure_at": prev["last_failure_at"]})
+
+    async def handle_status(self, streamer: dict, status: LiveStatus) -> None:
+        sid = streamer["id"]
+        await self._record_monitor_diagnostic(streamer, status)
         run = next((r for r in self.runs.values() if r.streamer_id == sid and not r.closing), None)
         loop = asyncio.get_running_loop()
         if status.state == LIVE:
@@ -531,9 +582,9 @@ class Supervisor:
             return None
 
     # ------------------------------------------------------------ DB helpers (別スレッド)
-    def _event(self, t: str, sev: str, msg: str, session_id: int | None = None) -> None:
+    def _event(self, t: str, sev: str, msg: str, session_id: int | None = None, metadata: dict | None = None) -> None:
         with self.ctx.engine.begin() as conn:
-            sessions.add_event(conn, t, sev, msg, session_id)
+            sessions.add_event(conn, t, sev, msg, session_id, metadata)
 
     def _mark_checked(self, streamer_id: int, live: bool) -> None:
         from live_rec_lab.db.models import streamers as st

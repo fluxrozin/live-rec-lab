@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from live_rec_lab.external import Budget, ExternalDenied, ExternalGate, host_allowed
+from live_rec_lab.external import Budget, ExternalDenied, ExternalGate, host_allowed, http_timeout_reason
 from live_rec_lab.platforms.base import ERROR, LIVE, OFFLINE, UNKNOWN, CommentEvent, LiveStatus, RecordSpec
 
 log = logging.getLogger("live_rec_lab.twitcasting")
@@ -98,14 +98,14 @@ class TwitCastingAdapter:
         return {"Accept": "application/json", "X-Api-Version": "2.0",
                 "Authorization": "Basic " + base64.b64encode(raw).decode()}
 
-    async def _get(self, path: str, params: dict | None = None) -> tuple[int, dict | None]:
+    async def _get(self, path: str, params: dict | None = None) -> tuple[int | None, dict | None]:
         """予算計上 → GET → ヘッダの残枠を反映。JSONでなければ body=None。"""
         if not self.configured:
             raise ExternalDenied("ツイキャスの資格情報が未設定です（連携を保留）")
         if not await asyncio.to_thread(self.budget.reserve, "twitcasting:api", API_LIMIT, API_WINDOW):
-            return 429, None
+            return None, None
         if await asyncio.to_thread(self.budget.waiting_until, "twitcasting:api"):
-            return 429, None
+            return None, None
         if self._client is None:
             self._client = self.gate.client("twitcasting", base_url=API)
         r = await self._client.get(path, params=params, headers=self._headers())
@@ -130,12 +130,14 @@ class TwitCastingAdapter:
             code, body = await self._get(f"/users/{account}/current_live")
         except ExternalDenied:
             raise
-        except httpx.TimeoutException:
-            return LiveStatus(UNKNOWN, reason="timeout")
+        except httpx.TimeoutException as exc:
+            return LiveStatus(UNKNOWN, reason=http_timeout_reason(exc))
         except httpx.ConnectError:
             return LiveStatus(UNKNOWN, reason="connect_error")
         except httpx.HTTPError as exc:
             return LiveStatus(ERROR, reason=f"http_error:{type(exc).__name__}")
+        if code is None:
+            return LiveStatus(UNKNOWN, reason="budget_wait")
         return parse_current_live(code, body)
 
     async def aclose(self) -> None:
@@ -347,6 +349,8 @@ class TwitCastingComments:
 
     async def _page(self, **params) -> list[dict]:
         code, body = await self.a._get(f"/movies/{self.movie_id}/comments", {"limit": PAGE, **params})
+        if code is None:
+            raise RuntimeError("comments API budget wait")
         if code == 404:
             return []
         if code != 200 or body is None:

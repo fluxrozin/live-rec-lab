@@ -35,6 +35,15 @@ class ExternalDenied(RuntimeError):
     pass
 
 
+def http_timeout_reason(exc: httpx.TimeoutException) -> str:
+    return {
+        httpx.ConnectTimeout: "timeout_connect",
+        httpx.ReadTimeout: "timeout_read",
+        httpx.WriteTimeout: "timeout_write",
+        httpx.PoolTimeout: "timeout_pool",
+    }.get(type(exc), "timeout_http")
+
+
 def host_allowed(service: str, host: str) -> bool:
     host = host.lower().rstrip(".")
     for suffix in ALLOWED_HOSTS.get(service, ()):
