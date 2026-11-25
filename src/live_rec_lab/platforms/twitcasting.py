@@ -81,7 +81,8 @@ class TwitCastingAdapter:
 
     def __init__(self, gate: ExternalGate, budget: Budget, secrets: dict[str, str],
                  poll_seconds: Callable[[], float] = lambda: 10.0, ffmpeg: str | None = None,
-                 ffmpeg_https: bool = True) -> None:
+                 ffmpeg_https: bool = True, force_engine: str | None = None) -> None:
+        self.force_engine = force_engine  # 隔離の実証用: 録画経路を1つに固定する（通常運用では使わない）
         self.gate, self.budget, self.secrets, self.poll_seconds = gate, budget, secrets, poll_seconds
         self.ffmpeg, self.ffmpeg_https = ffmpeg, ffmpeg_https
         self._client: httpx.AsyncClient | None = None
@@ -151,6 +152,8 @@ class TwitCastingAdapter:
         if not self.ffmpeg_https:
             log.info("使用中のffmpegはHTTPS非対応のため、公式HLSの直接取得は使わずStreamlinkを使います")
         engine = engines[self._engine_idx.get(account, 0) % len(engines)]
+        if self.force_engine in engines:
+            engine = self.force_engine
         ff = self.ffmpeg or shutil.which("ffmpeg")
         url = status.extra.get("hls_url")
         if engine == "tc-hls":

@@ -136,7 +136,7 @@ def _gather(dev: bool, environ: dict[str, str] | None) -> dict[str, str]:
     keys = {
         "LIVE_REC_LAB_DATA_DIR", "LIVE_REC_LAB_STATE_DIR", "LIVE_REC_LAB_RECORDING_ROOT",
         "LIVE_REC_LAB_EXISTING_RECORDING_ROOTS", "LIVE_REC_LAB_FFMPEG_BIN", "LIVE_REC_LAB_DISABLE_SCHEDULER",
-        "TWITCASTING_CLIENT_ID", "TWITCASTING_CLIENT_SECRET", "SIGN_API_KEY",
+        "LIVE_REC_LAB_TWITCASTING_FORCE_ENGINE", "TWITCASTING_CLIENT_ID", "TWITCASTING_CLIENT_SECRET", "SIGN_API_KEY",
     }
     for k in keys:
         full = prefix + k

@@ -92,6 +92,6 @@ Windows のスリープ・休止では録画が中断する。画面ロック・
 ローカルのみ（疑似配信 + 実ffmpeg + 一時SQLite）: 検知→録画/コメント→確定→収束→コメントSRT、停止時の回収、再起動時回収、アーカイブ削除の安全性、手動復元。
 実配信で確認済み（隔離・2026-11-25、対象 `yanaks64` / `u971368` / `mihiro519` / `maoki_it`）: TikTok のコメント（Euler 無料キー、`yanaks64` で受信・保存。room API の `streamId` はストリームIDで、接続先Room IDはSDKが解決する）、 TikTok の room API 監視・Room ID・Streamlink での実録画・TikTokLive 接続（Room ID 一致）・署名枠の実測、ツイキャスの current_live・comments（実コメント保存）・Streamlink での実録画。
 ツイキャスのプリロール除外（公式HLS先頭の黒地4秒を内容照合で除外）、匿名コメント番号（視聴用WebSocket、コメントID照合。字幕は「匿名コメント#番号」表記）、ASSの表示（MPC-HC）も確認済み。
-ツイキャスの公開 tc-hls は、Streamlink の twitcasting プラグインがその視聴用HLSを使うため、Streamlink 経路の実録画で確認済み。
+ツイキャスの公開 tc-hls は、製品の録画フローで実配信を録画し確定まで確認済み（隔離専用の `DEV_LIVE_REC_LAB_TWITCASTING_FORCE_ENGINE=tc-hls` で経路を固定して実施）。
 **TikTok の yt-dlp 録画は現状利用不可（実測）**: 配信中の `u971368`・`mihiro519` で、yt-dlp 2026.11.23 は「not currently live」を返した（抽出器が署名なしの room/info を使うため）。設定の順序は streamlink → yt-dlp のままで、Streamlink が成立している間は使われない。
 **未検証**: Windowsサインイン後の自動起動（タスク登録・実ログオン）、WSL再起動後の復帰。これらは実証までは利用不可として扱う。

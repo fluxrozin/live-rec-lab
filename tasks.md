@@ -66,7 +66,7 @@
 - **公開tc-hls**: 直接URL（metastream.m3u8）は404で独自実装はしない。Streamlinkの twitcasting プラグイン（8.6.3）は `streamserver.php` の `tc-hls` ストリーム（公開の視聴用HLS）を使うため、Streamlink経路の実録画（実配信で有効なMP4を確定済み）が公開tc-hls→Streamlink HLSの段に相当する。公式HLS→Streamlinkの2段で運用。
 - **ASS**: MPC-HCで表示確認済み（UTF-8 BOM付き）。
 
-- **公開tc-hls（実配信で確認）**: `streamserver.php` の `tc-hls.streams` からURLを取得し、ffmpeg 9.1(TLS対応の再ビルド)で12秒録画（h264 640x360 + AAC, 186KB）。
+- **公開tc-hls（実配信で通し確認）**: `streamserver.php` の `tc-hls.streams` からURLを取得。隔離専用の環境変数 `DEV_LIVE_REC_LAB_TWITCASTING_FORCE_ENGINE=tc-hls` で経路を固定し、製品の録画フローで約151秒のH.264 MP4（2.9MB）を確定（engine=tc-hls, valid）。通常運用の順序は 公式HLS→tc-hls→Streamlink のまま。
 - **yt-dlpのTikTok利用**: 利用者提案により既定の `tiktok_engine_order` から除外（設定値としては選択可）。
 
 ## TikTokコメント（実配信で確認、2026-11-25 17:3x）

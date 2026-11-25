@@ -19,5 +19,6 @@ def build_adapters(ctx: AppContext) -> dict:
 
     return {
         "tiktok": TikTokAdapter(ctx.gate, budget, ctx.env.secrets),
-        "twitcasting": TwitCastingAdapter(ctx.gate, budget, ctx.env.secrets, poll, ctx.tools.ffmpeg, ctx.tools.https),
+        "twitcasting": TwitCastingAdapter(ctx.gate, budget, ctx.env.secrets, poll, ctx.tools.ffmpeg, ctx.tools.https,
+                                      ctx.env.flags.get("LIVE_REC_LAB_TWITCASTING_FORCE_ENGINE") if ctx.env.dev else None),
     }
