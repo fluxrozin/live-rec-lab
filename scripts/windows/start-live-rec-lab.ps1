@@ -1,5 +1,5 @@
 ﻿# Windowsサインイン時にWSL2のLiveRecorder（通常運用）を非対話で起動する。
-# 登録はタスクスケジューラ（ログオン時）を利用者が手動で行う。手順は docs/manual.md を参照。
+# 登録はタスクスケジューラ（ログオン時）を利用者が手動で行う。手順は docs/manual/README.md を参照。
 param(
   [string]$Distro = "Ubuntu",
   [string]$RepoPath = "~/projects/live-rec-lab",
