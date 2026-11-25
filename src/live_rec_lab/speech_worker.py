@@ -16,6 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from live_rec_lab.config import apply_hf_token
+
 
 def emit(**kw) -> None:
     print(json.dumps(kw, ensure_ascii=False), flush=True)
@@ -70,11 +72,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--device", choices=["cuda", "cpu"], required=True)
     p.add_argument("--ffmpeg", default="ffmpeg")
     a = p.parse_args(argv)
-    # ライブラリ既定キャッシュ・通常資格情報を継承しない。モデルの自動取得は行わない（オフライン固定）。
+    # ライブラリ既定キャッシュ・取得用トークンを継承しない。モデルの自動取得は行わない（オフライン固定）。
     os.environ["HF_HOME"] = str(Path(a.model_dir) / ".hf-home")
     os.environ["HF_HUB_OFFLINE"] = "1"
-    for k in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
-        os.environ.pop(k, None)
+    apply_hf_token(None)
     try:
         if a.device == "cuda":
             preload_cuda_libs()

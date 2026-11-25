@@ -7,7 +7,7 @@
   <dt>起動時刻</dt><dd class="u-num">{{ app_ctx.started_at|dt }}</dd><dt>コード版</dt><dd class="u-mono">{{ app_ctx.code_revision }}</dd>
   <dt>待受ポート</dt><dd class="u-num">{{ app_ctx.port }}（保存値 {{ settings.web_port }}）</dd>
   <dt>スケジューラ</dt><dd>{{ "無効（監視・新規ジョブを開始しません）" if app_ctx.scheduler_disabled else "稼働中" }}</dd>
-  <dt>外部通信</dt><dd>{{ "許可（--allow-live）" if app_ctx.gate.allow_live else "既定で拒否" }}</dd></dl></div></div>
+  <dt>外部通信</dt><dd>{% if app_ctx.gate.allow_live %}{{ "許可（--allow-live）" if mode == "developer" else "許可（有効な登録対象）" }}{% elif mode == "developer" %}既定で拒否{% else %}無効（スケジューラ停止中）{% endif %}</dd></dl></div></div>
  <div class="c-panel"><div class="c-panel__head"><h2>メディアツール</h2>{{ ui.badge("live", "正常") if tools.ok else ui.badge("err", "異常") }}</div><div class="c-panel__body"><dl class="c-kv">
   <dt>ffmpeg</dt><dd class="u-mono">{{ tools.ffmpeg }} （{{ tools.ffmpeg_version }}）</dd><dt>ffprobe</dt><dd class="u-mono">{{ tools.ffprobe }} （{{ tools.ffprobe_version }}）</dd>
   <dt>解決元</dt><dd>{{ tools.source }}</dd><dt>デコーダ</dt><dd>{% for k, v in tools.decoders.items() %}{{ k }}: {{ "可" if v else "不可" }}　{% endfor %}</dd></dl>{% if tools.error %}<div class="c-field-error">{{ tools.error }}</div>{% endif %}</div></div>

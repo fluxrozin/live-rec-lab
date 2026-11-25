@@ -72,6 +72,7 @@ def run_server(env: Environment, *, allow_live: bool = False) -> int:
         raise ConfigError("LIVE_REC_LAB_DISABLE_SCHEDULER は 0 か 1 のみ指定できます")
     if allow_live and not env.dev:
         raise ConfigError("--allow-live は隔離（--dev）起動専用です")
+    live_enabled = allow_live if env.dev else not scheduler_disabled
 
     from live_rec_lab import restore
 
@@ -83,7 +84,7 @@ def run_server(env: Environment, *, allow_live: bool = False) -> int:
     sock = None
     instance_id = new_instance_id()
     try:
-        if allow_live:
+        if live_enabled:
             live_lock.acquire()
         dbs.migrate(env.db_path)
         os.chmod(env.db_path, 0o600)
@@ -100,7 +101,7 @@ def run_server(env: Environment, *, allow_live: bool = False) -> int:
         tools = resolve(env.flags.get("LIVE_REC_LAB_FFMPEG_BIN"))
         started = utcnow()
         ctx = AppContext(
-            env=env, engine=engine, gate=ExternalGate(allow_live, live_lock if allow_live else None),
+            env=env, engine=engine, gate=ExternalGate(live_enabled, live_lock if live_enabled else None),
             tools=tools, instance_id=instance_id, started_at=started, port=port,
             code_revision=code_revision(), scheduler_disabled=scheduler_disabled,
         )

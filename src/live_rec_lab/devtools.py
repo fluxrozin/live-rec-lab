@@ -9,7 +9,7 @@ import argparse
 import sys
 
 from live_rec_lab import settings_store, streamers
-from live_rec_lab.config import ConfigError, ensure_private_dir, resolve_environment
+from live_rec_lab.config import ConfigError, apply_hf_token, ensure_private_dir, resolve_environment
 from live_rec_lab.db import session as dbs
 from live_rec_lab.runtime import InstanceLock
 
@@ -59,8 +59,9 @@ def fetch_model(name: str) -> int:
     models = env.model_dir
     ensure_private_dir(models)
     os.environ["HF_HOME"] = str(models / ".hf-home")  # ライブラリ既定キャッシュを使わない
-    os.environ.pop("HF_TOKEN", None)
-    os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    token = env.secrets.get("HF_TOKEN")  # 隔離は DEV_HF_TOKEN のみ。通常の HF_TOKEN は継承しない
+    apply_hf_token(token)
+    print("HF_TOKEN を使って取得します" if token else "HF_TOKEN は未設定です。未認証で取得します")
     from faster_whisper.utils import download_model
 
     path = download_model(name, cache_dir=str(models))

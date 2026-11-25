@@ -155,7 +155,7 @@ class ExternalGate:
                 raise ExternalDenied(f"ループバック以外は許可されません: {host}")
             return
         if not self.allow_live or self.lock is None or not self.lock.held:
-            raise ExternalDenied("外部通信は許可されていません（--allow-live と共通ロックが必要）")
+            raise ExternalDenied("外部通信は許可されていません（起動モードの許可と共通ロックが必要）")
         if not host_allowed(service, host):
             raise ExternalDenied(f"許可されていない宛先です: {host}")
 

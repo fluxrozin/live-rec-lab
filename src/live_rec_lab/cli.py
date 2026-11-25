@@ -1,4 +1,4 @@
-"""CLI入口: start / status / url / stop / backup / config / diagnose。"""
+"""CLI入口: start / restart / status / url / stop / backup / config / diagnose。"""
 
 from __future__ import annotations
 
@@ -25,6 +25,16 @@ def cmd_start(args: argparse.Namespace) -> int:
     return server.run_server(env, allow_live=args.allow_live)
 
 
+def cmd_restart(args: argparse.Namespace) -> int:
+    env = _env(args)
+    if args.allow_live and not env.dev:
+        raise ConfigError("--allow-live は隔離（--dev）起動専用です")
+    stopped = _stop(env)
+    if stopped != 0:
+        return stopped
+    return server.run_server(env, allow_live=args.allow_live)
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     env = _env(args)
     ep = read_endpoint(env)
@@ -45,7 +55,10 @@ def cmd_url(args: argparse.Namespace) -> int:
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    env = _env(args)
+    return _stop(_env(args))
+
+
+def _stop(env: Environment) -> int:
     ep = read_endpoint(env)
     if not ep:
         print("稼働中のインスタンスはありません")
@@ -155,8 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.set_defaults(fn=fn)
         return sp
 
-    s = add("start", cmd_start, "起動")
-    s.add_argument("--allow-live", action="store_true", help="隔離の実接続を許可（永続化しない）")
+    for command in (
+        add("start", cmd_start, "起動"),
+        add("restart", cmd_restart, "正常停止を確認して起動"),
+    ):
+        command.add_argument("--allow-live", action="store_true", help="隔離の実接続を許可（永続化しない）")
     add("status", cmd_status, "稼働状態")
     add("url", cmd_url, "URL表示")
     add("stop", cmd_stop, "停止")

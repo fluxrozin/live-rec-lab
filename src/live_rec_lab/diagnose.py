@@ -43,7 +43,8 @@ def collect(env: Environment) -> dict:
     comps["storage"] = storage
     comps["external"] = {"observed_at": now, "status": "denied_by_default",
                          "twitcasting_credentials": "set" if "TWITCASTING_CLIENT_ID" in env.secrets else "unset",
-                         "sign_api_key": "set" if "SIGN_API_KEY" in env.secrets else "unset"}
+                         "sign_api_key": "set" if "SIGN_API_KEY" in env.secrets else "unset",
+                         "hf_token": "set" if "HF_TOKEN" in env.secrets else "unset"}
     status = "ok" if not errors and db_state in ("ok", "missing") else "partial"
     return {
         "schema_version": SCHEMA_VERSION,

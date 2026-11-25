@@ -136,7 +136,8 @@ def _gather(dev: bool, environ: dict[str, str] | None) -> dict[str, str]:
     keys = {
         "LIVE_REC_LAB_DATA_DIR", "LIVE_REC_LAB_STATE_DIR", "LIVE_REC_LAB_RECORDING_ROOT",
         "LIVE_REC_LAB_EXISTING_RECORDING_ROOTS", "LIVE_REC_LAB_FFMPEG_BIN", "LIVE_REC_LAB_DISABLE_SCHEDULER",
-        "LIVE_REC_LAB_TWITCASTING_FORCE_ENGINE", "TWITCASTING_CLIENT_ID", "TWITCASTING_CLIENT_SECRET", "SIGN_API_KEY",
+        "LIVE_REC_LAB_TWITCASTING_FORCE_ENGINE", "TWITCASTING_CLIENT_ID", "TWITCASTING_CLIENT_SECRET",
+        "SIGN_API_KEY", "HF_TOKEN",
     }
     for k in keys:
         full = prefix + k
@@ -150,7 +151,7 @@ def _gather(dev: bool, environ: dict[str, str] | None) -> dict[str, str]:
 
 def resolve_environment(dev: bool, environ: dict[str, str] | None = None) -> Environment:
     vals = _gather(dev, environ)
-    secret_keys = ("TWITCASTING_CLIENT_ID", "TWITCASTING_CLIENT_SECRET", "SIGN_API_KEY")
+    secret_keys = ("TWITCASTING_CLIENT_ID", "TWITCASTING_CLIENT_SECRET", "SIGN_API_KEY", "HF_TOKEN")
     secrets = {k: vals[k] for k in secret_keys if k in vals}
     flags = {k: v for k, v in vals.items() if k not in secret_keys}
 
@@ -206,6 +207,18 @@ def validate_boundaries(env: Environment) -> None:
                 raise ConfigError(
                     "隔離の録画ルートは専用録画領域か、許可済みWindows専用試験フォルダ配下に限られます"
                 )
+
+
+def apply_hf_token(token: str | None) -> None:
+    """モデル取得プロセスの HF 認証を、指定したトークンだけにする。
+
+    シェルに残っている ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` は消す。
+    ``token`` が空なら未認証のままにする。推論子は ``None`` を渡し、トークンを送らない。
+    """
+    os.environ.pop("HF_TOKEN", None)
+    os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    if token:
+        os.environ["HF_TOKEN"] = token
 
 
 def ensure_private_dir(path: Path) -> None:
