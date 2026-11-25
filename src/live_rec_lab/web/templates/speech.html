@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="l-page-head"><h1>音声字幕</h1><span class="u-row"><a class="c-btn" href="/speech/cues">発話本文を見る</a><button class="c-btn" data-action="retry-failed">失敗分を再試行</button></span></div>
+<div class="c-panel">{% if res["items"] %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>配信</th><th>セグメント</th><th>音声SRT</th><th>統合ASS</th><th>詳細</th><th></th></tr></thead><tbody>
+{% for g in res["items"] %}<tr><td><div class="u-cell2"><b><a href="/recordings/{{ g.stream_session_id }}">{{ g.display_name }}</a></b><span class="u-sub">{{ g.detected_at|dt }}</span></div></td><td class="u-num">s{{ "%03d"|format(g.segment_number or 0) }}</td>
+<td>{{ {"generated": ui.badge("live", "生成済み"), "skipped": ui.badge("idle", "対象なし"), "failed": ui.badge("err", "失敗"), "blocked": ui.badge("warn", "実行不可"), "running": ui.badge("cmt", "処理中", True), "none": ui.badge("idle", "未生成")}[g.speech_status] }}</td>
+<td>{{ {"generated": ui.badge("live", "生成済み"), "skipped": ui.badge("idle", "対象なし"), "failed": ui.badge("err", "失敗"), "none": ui.badge("idle", "未生成")}[g.ass_status] }}</td>
+<td class="u-sub">{{ g.speech_error or "" }} {{ g.ass_error or "" }}</td>
+<td class="is-right"><span class="u-row" style="justify-content:flex-end"><button class="c-btn c-btn--sm" data-action="regen-speech" data-id="{{ g.id }}">音声を再生成</button><button class="c-btn c-btn--sm" data-action="regen-ass" data-id="{{ g.id }}">ASSを再生成</button></span></td></tr>{% endfor %}
+</tbody></table></div>{{ ui.pager(res, base_url) }}{% else %}{{ ui.empty("対象の動画セグメントはありません") }}{% endif %}</div>
+{% endblock %}

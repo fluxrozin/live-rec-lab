@@ -1,0 +1,13 @@
+{% import "components/ui.html" as ui with context %}
+<div id="active-sessions" hx-get="/partials/active-sessions" hx-trigger="every {{ refresh }}s" hx-swap="outerHTML" class="c-panel">
+  <div class="c-panel__head"><h2>アクティブセッション <span class="c-tag">{{ d.active|length }}</span></h2><span class="u-sub u-row">{{ ui.icon("clock") }}更新 {{ now }} · {{ refresh }}秒ごと</span></div>
+  {% if d.active %}
+  <div class="c-table-wrap"><table class="c-table"><thead><tr><th>配信者</th><th>状態</th><th class="is-right">経過</th><th class="is-right">コメント</th><th class="is-right">容量</th><th></th></tr></thead><tbody>
+  {% for s in d.active %}
+  <tr><td><div class="u-cell2"><b><a href="/recordings/{{ s.id }}">{{ s.display_name }}</a></b><span class="u-sub">{{ ui.tag(s.platform) }} @{{ s.platform_user_id }}{% if s.title %} · {{ s.title }}{% endif %}</span></div></td>
+    <td><div class="u-row u-wrap">{{ ui.session_badges(s) }}</div></td>
+    <td class="is-right u-num">{{ s.detected_at|ago }}</td><td class="is-right u-num">{{ s.comment_count }}</td><td class="is-right u-num">{{ s.size|size }}</td>
+    <td class="is-right">{% if s.recording %}<button class="c-btn c-btn--sm c-btn--danger" data-action="stop-recording" data-id="{{ s.id }}">録画を停止</button>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div>
+  {% else %}{{ ui.empty("現在配信中のアカウントはありません", "配信開始を検知すると、録画とコメント収集の状態がここに表示されます。") }}{% endif %}
+</div>

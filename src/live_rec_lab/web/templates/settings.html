@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% macro row(key, label, help, control) %}<div class="c-srow"><div><b>{{ label }}</b>{% if help %}<p>{{ help }}</p>{% endif %}</div><div>{{ control|safe }}</div></div>{% endmacro %}
+{% macro num(key, unit="", step="1", min="", max="") %}<span class="c-unit"><input class="c-input" data-key="{{ key }}" data-type="number" type="number" step="{{ step }}" {% if min != "" %}min="{{ min }}"{% endif %} {% if max != "" %}max="{{ max }}"{% endif %} value="{{ s[key] }}" aria-label="{{ key }}">{% if unit %}<span>{{ unit }}</span>{% endif %}</span>{% endmacro %}
+{% macro sel(key, options) %}<select class="c-select" data-key="{{ key }}" data-type="string" aria-label="{{ key }}">{% for v, l in options %}<option value="{{ v }}" {{ 'selected' if s[key] == v }}>{{ l }}</option>{% endfor %}</select>{% endmacro %}
+{% macro chk(key) %}<label class="c-switch"><input type="checkbox" data-key="{{ key }}" data-type="bool" {{ 'checked' if s[key] }} aria-label="{{ key }}"><i></i></label>{% endmacro %}
+{% block content %}
+<div class="l-page-head"><h1>設定</h1></div>
+<div class="l-settings" id="settings" data-version="{{ s.settings_version }}">
+  <nav class="c-catnav" aria-label="設定カテゴリ">
+    {% for id, label in cats %}<a href="#cat-{{ id }}" data-cat="{{ id }}"{% if loop.first %} aria-current="true"{% endif %}>{{ label }}<span class="c-badge c-badge--warn" hidden data-dirty-badge="{{ id }}" style="height:18px">未保存</span></a>{% endfor %}
+  </nav>
+  <div class="u-stack">
+    <section class="c-panel" id="cat-monitor" data-section="monitor"><div class="c-panel__head"><h2>監視</h2><span class="u-sub">保存後: 次回巡回から反映</span></div>
+      {{ row("tiktok_monitor_rate", "TikTok 監視頻度", "上限 10 回/分（小数可）。外部の残枠・コメント優先により実効頻度が下がる場合があります。", num("tiktok_monitor_rate", "回/分", "any", "0", "10")) }}
+      {{ row("twitcasting_monitor_rate", "ツイキャス 監視頻度", "上限 60 回/分（小数可）。公式APIの残枠を優先します。", num("twitcasting_monitor_rate", "回/分", "any", "0", "60")) }}
+    </section>
+    <section class="c-panel" id="cat-recording" data-section="recording"><div class="c-panel__head"><h2>録画・保存</h2><span class="u-sub">保存後: 次の録画から反映</span></div>
+      {{ row("max_concurrent_recordings", "同時録画上限", "1〜20。下げても進行中の録画は停止しません。", num("max_concurrent_recordings", "本", "1", "1", "20")) }}
+      {{ row("recording_quality", "録画品質", "実際の取得品質は配信の提供状況に従います。", sel("recording_quality", [("best", "最高（元品質）"), ("high", "高"), ("medium", "中")])) }}
+      {{ row("recording_root", "保存先", "Windows側の絶対パス（WSL形式）。新規セッションから適用し、既存の録画は移動しません。", '<input class="c-input" style="width:min(360px,100%)" data-key="recording_root" data-type="string" value="' ~ (s.recording_root or '') ~ '" aria-label="保存先">') }}
+      {{ row("min_free_gib", "最低空き容量", "下回ると新規録画を開始しません。", num("min_free_gib", "GiB", "any", "0")) }}
+      {{ row("max_recording_gib", "保存容量上限", "0 は上限なし。管理対象の動画・字幕の合計が対象です。", num("max_recording_gib", "GiB", "any", "0")) }}
+      {{ row("archive_retention_days", "アーカイブ保存期限", "0 は無期限。終了確認済みの配信からの日数です。", num("archive_retention_days", "日", "1", "0", "36500")) }}
+      {{ row("auto_delete_enabled", "自動削除", "ON にすると期限・容量条件でアーカイブ全体（動画・全字幕・コメント・履歴）を一括削除します。", chk("auto_delete_enabled")) }}
+      {{ row("reconnect_max_attempts", "再接続回数", "初回接続を含まない追加試行の上限（0〜30）。", num("reconnect_max_attempts", "回", "1", "0", "30")) }}
+    </section>
+    <section class="c-panel" id="cat-comments" data-section="comments"><div class="c-panel__head"><h2>コメント・SRT</h2></div>
+      {{ row("comments_globally_enabled", "コメント収集（全体）", "配信者ごとの設定と両方ONの場合だけ収集します。", chk("comments_globally_enabled")) }}
+      {{ row("twitcasting_comment_poll_seconds", "ツイキャス取得間隔", "5〜120 秒。", num("twitcasting_comment_poll_seconds", "秒", "1", "5", "120")) }}
+      {{ row("comment_srt_duration_seconds", "字幕の表示秒数", "次回の生成・手動再生成から反映します。", num("comment_srt_duration_seconds", "秒", "any", "0.001")) }}
+    </section>
+    <section class="c-panel" id="cat-speech" data-section="speech"><div class="c-panel__head"><h2>音声字幕</h2><span class="u-sub">GPU・モデルの状態は「システム状態」で確認</span></div>
+      {{ row("speech_subtitles_enabled", "自動生成", "収集終了後にまとめて生成します。", chk("speech_subtitles_enabled")) }}
+      {{ row("speech_model", "モデル", "", sel("speech_model", [("large-v3", "large-v3"), ("large-v3-turbo", "large-v3-turbo")])) }}
+      {{ row("speech_language", "認識言語", "言語コード（既定 ja）。", '<input class="c-input" data-key="speech_language" data-type="string" value="' ~ s.speech_language ~ '" style="width:120px" aria-label="言語">') }}
+      {{ row("speech_device", "実行デバイス", "CPUへの暗黙の切り替えはしません。", sel("speech_device", [("cuda", "CUDA（GPU）"), ("cpu", "CPU")])) }}
+    </section>
+    <section class="c-panel" id="cat-display" data-section="display"><div class="c-panel__head"><h2>表示</h2><span class="u-sub">保存後すぐ反映</span></div>
+      {{ row("display_timezone", "表示タイムゾーン", "IANA形式（例 Asia/Tokyo）。保存済みの相対字幕時刻は変わりません。", '<input class="c-input" data-key="display_timezone" data-type="string" value="' ~ s.display_timezone ~ '" style="width:200px" aria-label="タイムゾーン">') }}
+      {{ row("display_font", "フォント", "全画面に反映されます。", sel("display_font", [("windows", "Windows標準"), ("noto-sans-jp", "Noto Sans JP")])) }}
+      <div class="c-srow"><div><b>プレビュー</b></div><div class="c-fontprev" id="font-preview">配信中 録画 12,345 件 / 2026-11-25 13:20 / TikTok・ツイキャス 日本語ABC123</div></div>
+      {{ row("web_refresh_interval_seconds", "自動更新間隔", "1秒以上。保存後に再起動なしで反映します。", num("web_refresh_interval_seconds", "秒", "1", "1")) }}
+    </section>
+    <section class="c-panel" id="cat-advanced" data-section="advanced"><div class="c-panel__head"><h2>詳細設定</h2></div>
+      {{ row("log_level", "ログレベル", "", sel("log_level", [("DEBUG", "DEBUG"), ("INFO", "INFO"), ("WARNING", "WARNING"), ("ERROR", "ERROR")])) }}
+      {{ row("web_port", "固定Webポート", "現在の待受: " ~ running_port ~ "。変更は次回起動から反映します（再起動後反映）。", num("web_port", "", "1", "1024", "65535")) }}
+    </section>
+    <div class="c-savebar" id="savebar"><span class="u-row u-mute" id="save-status" role="status">{{ ui.icon("clock") }}変更はありません</span><span class="u-row"><button class="c-btn c-btn--ghost" type="button" id="discard" disabled>変更を破棄</button><button class="c-btn c-btn--primary" type="button" id="save" disabled>設定を保存</button></span></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="l-page-head"><h1>録画履歴</h1></div>
+<form class="c-toolbar" method="get" action="/recordings" role="search">
+  <input class="c-input" type="search" name="q" value="{{ q }}" placeholder="配信者・タイトルで検索" aria-label="検索" style="width:280px">
+  <select class="c-select" name="platform" aria-label="サービス"><option value="">すべてのサービス</option><option value="tiktok" {{ 'selected' if platform=='tiktok' }}>TikTok</option><option value="twitcasting" {{ 'selected' if platform=='twitcasting' }}>ツイキャス</option></select>
+  <select class="c-select" name="status" aria-label="状態"><option value="">すべての状態</option><option value="LIVE" {{ 'selected' if status=='LIVE' }}>配信中</option><option value="ENDED" {{ 'selected' if status=='ENDED' }}>終了</option></select>
+  <button class="c-btn" type="submit">絞り込み</button></form>
+<div class="c-panel">
+{% if res["items"] %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>配信</th><th>状態</th><th>開始</th><th class="is-right">録画時間</th><th class="is-right">セグメント</th><th class="is-right">コメント</th><th class="is-right">容量</th></tr></thead><tbody>
+{% for s in res["items"] %}<tr><td><div class="u-cell2"><b><a href="/recordings/{{ s.id }}">{{ s.display_name }}</a></b><span class="u-sub">{{ ui.tag(s.platform) }} {{ s.title or "（タイトルなし）" }}</span></div></td>
+<td><div class="u-row u-wrap">{{ ui.session_badges(s) }}{% if s.invalid_segments or s.gap_count %}{{ ui.badge("warn", "欠損あり") }}{% endif %}</div></td>
+<td class="u-num">{{ s.detected_at|dt }}</td><td class="is-right u-num">{{ s.duration_ms|hhmmss }}</td><td class="is-right u-num">{{ s.segments }}{% if s.invalid_segments %}<span class="u-sub"> (+{{ s.invalid_segments }}無効)</span>{% endif %}</td><td class="is-right u-num">{{ s.comment_count }}</td><td class="is-right u-num">{{ s.size|size }}</td></tr>{% endfor %}
+</tbody></table></div>{{ ui.pager(res, base_url) }}{% else %}{{ ui.empty("該当する配信はありません") }}{% endif %}</div>
+{% endblock %}

@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiveRecorder UI 比較プレビュー（A〜E）</title>
+<style>
+/* ========== 共通トークン（docs/ui-spec.md §2.10 ライト単一テーマ） ========== */
+:root{
+  color-scheme: light;
+  --bg:#F5F6F8; --sidebar:#EEF0F3; --panel:#FFFFFF; --panel-alt:#F6F7F9; --hover:#F1F3F6; --selected:#E8EBF0;
+  --border:#E2E6EC; --border-strong:#CDD3DD; --focus:#3D5AE0;
+  --text:#121926; --text-2:#4F5B6D; --text-3:#5B6779; --text-dis:#A2ABB8;
+  --accent:#3550D4; --accent-solid:#3D5AE0; --accent-hover:#3048C4; --accent-subtle:rgb(61 90 224 / 8%);
+  --live:#0B7A5E; --rec:#C2333D; --cmt:#1F6FAE; --warn:#92570A; --neutral:#687487;
+  --sp1:4px; --sp2:8px; --sp3:12px; --sp4:16px; --sp5:20px; --sp6:24px; --sp8:32px; --sp10:40px;
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:12px;
+  --font-win:"Segoe UI Variable","Segoe UI","Yu Gothic UI",sans-serif;
+  --font-noto:"Noto Sans JP",sans-serif;
+  --shadow-float:0 8px 24px rgb(18 25 38 / 12%), 0 1px 3px rgb(18 25 38 / 8%);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:400 14px/1.6 var(--font-win);font-variant-numeric:tabular-nums}
+body[data-font="noto"]{font-family:var(--font-noto);font-feature-settings:"palt" 1}
+button,input,select{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.mute{color:var(--text-3)} .sub{font-size:12px;color:var(--text-3);line-height:1.4}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--r-xs)}
+
+/* ---- 共通部品: バッジ（パルス付き） ---- */
+.badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid;white-space:nowrap}
+.badge .d{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.badge.live{color:var(--live);background:rgb(11 122 94 / 8%);border-color:rgb(11 122 94 / 30%)}
+.badge.rec{color:var(--rec);background:rgb(194 51 61 / 8%);border-color:rgb(194 51 61 / 30%)}
+.badge.cmt{color:var(--cmt);background:rgb(31 111 174 / 8%);border-color:rgb(31 111 174 / 30%)}
+.badge.warn{color:var(--warn);background:rgb(146 87 10 / 9%);border-color:rgb(146 87 10 / 30%)}
+.badge.idle{color:var(--neutral);background:rgb(104 116 135 / 8%);border-color:rgb(104 116 135 / 28%)}
+.badge.err{color:var(--rec);background:rgb(194 51 61 / 8%);border-color:rgb(194 51 61 / 30%)}
+.badge.err .d{background:none;width:auto;height:auto;border-radius:0;font-size:11px;line-height:1}
+.badge.err .d::before{content:"×";font-weight:700}
+.badge.pulse .d{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 currentColor;opacity:1}70%{box-shadow:0 0 0 6px transparent;opacity:.85}100%{box-shadow:0 0 0 0 transparent;opacity:1}}
+@media (prefers-reduced-motion:reduce){.badge.pulse .d{animation:none}}
+.plat{display:inline-block;font-size:11px;font-weight:600;padding:1px 6px;border-radius:var(--r-xs);background:var(--selected);color:var(--text-2)}
+
+/* ---- 共通部品: ボタン・入力 ---- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--panel);cursor:pointer;font-weight:500}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent-solid);border-color:var(--accent-solid);color:#fff}
+.btn.primary:hover{background:var(--accent-hover)}
+.btn.sm{height:30px;padding:0 10px;font-size:13px}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.danger{color:var(--rec);border-color:rgb(194 51 61 / 35%)}
+.inp{height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--panel);min-width:0}
+.inp.sm{height:30px}
+.unit{display:inline-flex}.unit .inp{border-radius:var(--r-sm) 0 0 var(--r-sm);width:110px}.unit span{display:inline-flex;align-items:center;padding:0 10px;border:1px solid var(--border-strong);border-left:0;border-radius:0 var(--r-sm) var(--r-sm) 0;background:var(--panel-alt);color:var(--text-3);font-size:13px}
+.tog{width:34px;height:20px;border-radius:999px;background:var(--border-strong);position:relative;display:inline-block;flex:none}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 25%)}
+.tog.on{background:var(--accent-solid)} .tog.on::after{left:16px}
+.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ---- 比較ページの枠 ---- */
+.cmp-bar{position:sticky;top:0;z-index:50;background:#121926;color:#fff;display:flex;flex-wrap:wrap;gap:var(--sp2) var(--sp4);align-items:center;padding:10px var(--sp4)}
+.cmp-bar strong{font-size:14px}
+.cmp-bar .grp{display:flex;gap:4px}
+.cmp-bar button{height:30px;padding:0 12px;border-radius:var(--r-sm);border:1px solid rgb(255 255 255 / 25%);background:transparent;color:#fff;cursor:pointer;font-size:13px}
+.cmp-bar button[aria-pressed="true"]{background:#fff;color:#121926;border-color:#fff}
+.cmp-bar .lbl{font-size:12px;opacity:.7}
+.cmp-info{background:var(--panel);border-bottom:1px solid var(--border);padding:var(--sp3) var(--sp4);display:grid;grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(0,1fr));gap:var(--sp4);font-size:13px}
+.cmp-info h2{margin:0 0 2px;font-size:15px}.cmp-info h3{margin:0 0 2px;font-size:12px;color:var(--text-3);font-weight:600}.cmp-info p{margin:0;color:var(--text-2)}
+@media (max-width:1100px){.cmp-info{grid-template-columns:1fr 1fr}}
+.stage{min-height:760px;position:relative;overflow:hidden}
+
+/* ========== 共通レイアウト部品 ========== */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r-md)}
+.panel-h{display:flex;align-items:center;justify-content:space-between;gap:var(--sp3);padding:var(--sp3) var(--sp4);border-bottom:1px solid var(--border)}
+.panel-h h3{margin:0;font-size:15px;font-weight:600}
+table{border-collapse:collapse;width:100%}
+th{font-size:12px;font-weight:500;color:var(--text-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.r,th.r{text-align:right}
+.cell2{display:flex;flex-direction:column;min-width:0}.cell2 b{font-weight:500}
+.row{display:flex;align-items:center;gap:var(--sp2)}.wrap{flex-wrap:wrap}
+h1.pt{margin:0;font-size:22px;font-weight:600;line-height:1.25}
+.bar{height:6px;border-radius:999px;background:var(--selected);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent-solid)}
+
+/* ========== A: Heritage Console ========== */
+.A{display:grid;grid-template-columns:240px 1fr;min-height:760px}
+.A .side{background:var(--sidebar);border-right:1px solid var(--border);padding:var(--sp4) var(--sp3);display:flex;flex-direction:column;gap:var(--sp4)}
+.A .brand{display:flex;align-items:center;gap:var(--sp3);padding:0 var(--sp2)}
+.A .logo{width:30px;height:30px;border-radius:var(--r-md);background:var(--accent-solid);display:grid;place-items:center;color:var(--accent-solid)}
+.A .logo i{width:12px;height:12px;border-radius:50%;background:#fff}
+/* 待機中=青ベース、録画中=赤ベース＋パルス（利用者指定） */
+.A .logo.rec{background:var(--rec);color:var(--rec);animation:logopulse 1.8s ease-in-out infinite}
+@keyframes logopulse{0%{box-shadow:0 0 0 0 rgb(194 51 61 / 45%)}70%{box-shadow:0 0 0 8px rgb(194 51 61 / 0%)}100%{box-shadow:0 0 0 0 rgb(194 51 61 / 0%)}}
+@media (prefers-reduced-motion:reduce){.A .logo.rec{animation:none}}
+.A .gl{font-size:12px;color:var(--text-3);padding:0 var(--sp2);margin:0 0 4px}
+.A .nav a{display:flex;align-items:center;gap:var(--sp3);height:36px;padding:0 var(--sp2);border-radius:var(--r-sm);color:var(--text-2);font-size:14px}
+.A .nav a:hover{background:var(--hover)}
+.A .nav a[aria-current]{background:var(--selected);color:var(--text);font-weight:500}
+.A .main{min-width:0}
+.A .top{height:52px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 var(--sp8);font-size:13px;color:var(--text-3);background:var(--bg)}
+.A .content{padding:var(--sp6) var(--sp8);display:flex;flex-direction:column;gap:var(--sp5);max-width:1320px}
+.A .alert{display:flex;gap:var(--sp4);align-items:center;flex-wrap:wrap;padding:12px 16px;border:1px solid rgb(194 51 61 / 35%);background:rgb(194 51 61 / 7%);border-radius:var(--r-md);font-size:13px}
+.A .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp4)}
+.A .kpi{padding:var(--sp4) var(--sp5)}
+.A .kpi .v{font-size:28px;font-weight:600;line-height:1.25}
+.A .strip{display:grid;grid-template-columns:repeat(4,1fr)}
+.A .strip>div{padding:var(--sp3) var(--sp5);border-right:1px solid var(--border)}.A .strip>div:last-child{border:0}
+.A .cols{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(0,1fr);gap:var(--sp5)}
+.A .sess{display:grid;grid-template-columns:minmax(0,1.4fr) auto auto;gap:var(--sp4);align-items:center;padding:var(--sp3) var(--sp4);border-bottom:1px solid var(--border)}
+.A .sess:last-child{border:0}
+.A .setgrid{display:grid;grid-template-columns:200px 1fr;gap:var(--sp6);align-items:start}
+.A .catnav a{display:flex;align-items:center;gap:var(--sp2);height:36px;padding:0 var(--sp3);border-radius:var(--r-sm);color:var(--text-2)}
+.A .catnav a[aria-current]{background:var(--selected);color:var(--text);font-weight:500}
+.srow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--sp6);align-items:center;padding:var(--sp4) var(--sp5);border-bottom:1px solid var(--border)}
+.srow:last-child{border:0}.srow b{font-weight:600}.srow p{margin:2px 0 0;font-size:13px;color:var(--text-3)}
+.savebar{display:flex;align-items:center;justify-content:space-between;gap:var(--sp3);padding:var(--sp3) var(--sp4);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-float)}
+.fontprev{padding:var(--sp3) var(--sp4);border:1px dashed var(--border-strong);border-radius:var(--r-sm);background:var(--panel-alt);font-size:14px}
+
+/* ========== B: Precision Workspace（高密度・テーブル中心） ========== */
+.B{display:grid;grid-template-columns:64px 1fr;min-height:760px;font-size:13px}
+.B .rail{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0}
+.B .rail a{display:flex;flex-direction:column;align-items:center;gap:2px;width:52px;padding:6px 0;border-radius:var(--r-sm);font-size:10.5px;color:var(--text-3)}
+.B .rail a[aria-current]{background:var(--accent-subtle);color:var(--accent)}
+.B .rail a:hover{background:var(--hover)}
+.B .top{display:flex;align-items:center;gap:var(--sp3);height:44px;padding:0 var(--sp4);border-bottom:1px solid var(--border);background:var(--panel)}
+.B .cmd{flex:1;max-width:420px;height:28px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text-3);font-size:12px;background:var(--panel-alt)}
+.B .content{padding:var(--sp4);display:flex;flex-direction:column;gap:var(--sp3)}
+.B .inline-stats{display:flex;flex-wrap:wrap;gap:var(--sp1) var(--sp5);align-items:baseline;font-size:13px;color:var(--text-2)}
+.B .inline-stats b{font-size:16px;color:var(--text);font-weight:600;margin-right:4px}
+.B td{padding:7px 12px}.B th{padding:6px 12px;background:var(--panel-alt)}
+.B .tbl{overflow:hidden}
+.B .split{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp3)}
+.B .setgrid{display:grid;grid-template-columns:168px 1fr;gap:var(--sp4)}
+.B .catnav a{display:block;padding:5px 10px;border-radius:var(--r-xs);color:var(--text-2)}
+.B .catnav a[aria-current]{background:var(--selected);color:var(--text);font-weight:600}
+.B .srow{grid-template-columns:200px 1fr auto;gap:var(--sp4);padding:8px var(--sp3)}
+.B .srow p{margin:0}
+
+/* ========== C: Operations Monitor（運用監視特化） ========== */
+.C{min-height:760px}
+.C .topnav{display:flex;align-items:center;gap:var(--sp5);height:52px;padding:0 var(--sp5);background:#121926;color:#cfd6e2}
+.C .topnav a{padding:0 2px;height:52px;display:flex;align-items:center;font-size:13.5px;border-bottom:2px solid transparent;color:#aab4c4}
+.C .topnav a[aria-current]{color:#fff;border-color:#8aa0ff}
+.C .health{display:flex;gap:var(--sp4);align-items:center;padding:8px var(--sp5);background:var(--panel);border-bottom:1px solid var(--border);font-size:12.5px;flex-wrap:wrap}
+.C .health .it{display:flex;gap:6px;align-items:center}
+.C .health .age{color:var(--text-3)}
+.C .content{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:var(--sp5);padding:var(--sp5)}
+.C .wall{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp3)}
+.C .tile{padding:var(--sp4);border-left:4px solid var(--neutral);display:flex;flex-direction:column;gap:var(--sp3)}
+.C .tile.live{border-left-color:var(--live)} .C .tile.rec{border-left-color:var(--rec)} .C .tile.warn{border-left-color:var(--warn)}
+.C .meters{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp3)}
+.C .meters .m b{display:block;font-size:20px;font-weight:600;line-height:1.3}
+.C .fresh{height:8px;border-radius:2px;background:linear-gradient(90deg,var(--live) 0 82%,var(--selected) 82%)}
+.C .small-wall{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp2)}
+.C .mini{padding:var(--sp3);border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel)}
+.C .rail-r{display:flex;flex-direction:column;gap:var(--sp3)}
+.C .ev{display:grid;grid-template-columns:52px 1fr;gap:var(--sp2);padding:10px var(--sp3);border-bottom:1px solid var(--border);font-size:13px}
+.C .setgrid{display:grid;grid-template-columns:220px 1fr;gap:var(--sp5);padding:var(--sp5)}
+.C .catnav a{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-left:3px solid transparent;color:var(--text-2)}
+.C .catnav a[aria-current]{border-color:var(--accent-solid);background:var(--panel);font-weight:500;color:var(--text)}
+
+/* ========== D: Calm Studio（洗練・静穏） ========== */
+.D{min-height:760px;background:var(--panel)}
+.D .top{display:flex;justify-content:center;gap:var(--sp8);padding:var(--sp5) var(--sp6) 0;border-bottom:1px solid var(--border);position:relative}
+.D .top .mk{position:absolute;left:var(--sp6);top:22px;font-weight:600;display:flex;gap:8px;align-items:center}
+.D .top a{padding:0 2px 14px;color:var(--text-3);font-size:14px;border-bottom:2px solid transparent}
+.D .top a[aria-current]{color:var(--text);border-color:var(--text)}
+.D .content{max-width:880px;margin:0 auto;padding:var(--sp10) var(--sp6) 64px;display:flex;flex-direction:column;gap:var(--sp10)}
+.D h1.pt{font-size:26px;font-weight:600;letter-spacing:-.01em}
+.D .nums{display:flex;gap:var(--sp10);flex-wrap:wrap}
+.D .nums .n b{display:block;font-size:30px;font-weight:600;line-height:1.2}
+.D .list>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--sp4);align-items:center;padding:20px 0;border-bottom:1px solid var(--border)}
+.D .list>div:first-child{border-top:1px solid var(--border)}
+.D h2{margin:0 0 var(--sp3);font-size:16px;font-weight:600}
+.D .setgrid{display:grid;grid-template-columns:180px 1fr;gap:var(--sp10);align-items:start}
+.D .catnav{position:sticky;top:var(--sp4);display:flex;flex-direction:column;gap:2px}
+.D .catnav a{padding:6px 0;color:var(--text-3)} .D .catnav a[aria-current]{color:var(--text);font-weight:600}
+.D .srow{padding:20px 0;grid-template-columns:minmax(0,1fr) auto}
+.D .savebar{border:0;border-top:1px solid var(--border);border-radius:0;box-shadow:none;background:var(--panel);margin-top:var(--sp4)}
+.D .btn{border-radius:999px}.D .btn.sm{border-radius:999px}
+.D .inp{border-radius:var(--r-md)}
+.D .panel{border-radius:var(--r-lg);border-color:var(--border)}
+
+/* ========== E: Functional Desktop（デスクトップ実用） ========== */
+.E{min-height:760px;display:flex;flex-direction:column;font-size:13px;background:var(--panel-alt)}
+.E .menubar{display:flex;gap:2px;padding:2px 6px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12.5px}
+.E .menubar span{padding:3px 10px;border-radius:var(--r-xs)} .E .menubar span:hover{background:var(--hover)}
+.E .toolbar{display:flex;gap:var(--sp2);align-items:center;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--border-strong)}
+.E .body{flex:1;display:grid;grid-template-columns:188px 1fr;min-height:0}
+.E .tree{background:var(--panel);border-right:1px solid var(--border);padding:var(--sp2)}
+.E .tree a{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:var(--r-xs);color:var(--text-2)}
+.E .tree a[aria-current]{background:var(--selected);color:var(--text);font-weight:500}
+.E .md{display:grid;grid-template-columns:minmax(0,1fr) 340px;min-height:0}
+.E .listp{background:var(--panel);border-right:1px solid var(--border)}
+.E .listp .it{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)}
+.E .listp .it.sel{background:var(--selected)}
+.E .detail{padding:var(--sp4);display:flex;flex-direction:column;gap:var(--sp3)}
+.E .kv{display:grid;grid-template-columns:110px 1fr;gap:6px var(--sp3);font-size:13px}
+.E .kv dt{color:var(--text-3)} .E .kv dd{margin:0}
+.E .status{display:flex;gap:var(--sp5);padding:4px 10px;background:#E8EBF0;border-top:1px solid var(--border-strong);font-size:12px;color:var(--text-2)}
+.E .btn{height:28px;border-radius:var(--r-xs);padding:0 12px;font-weight:400}
+.E .inp{height:28px;border-radius:var(--r-xs)}
+.E .tabs{display:flex;gap:0;border-bottom:1px solid var(--border-strong);padding:0 var(--sp3);background:var(--panel-alt)}
+.E .tabs a{padding:7px 14px;border:1px solid transparent;border-bottom:0;margin-bottom:-1px;color:var(--text-2)}
+.E .tabs a[aria-current]{background:var(--panel);border-color:var(--border-strong);color:var(--text);font-weight:500}
+.E .dlg{background:var(--panel);border:1px solid var(--border-strong);margin:var(--sp4);box-shadow:var(--shadow-float)}
+.E .dlg .setgrid{display:grid;grid-template-columns:150px 1fr}
+.E .dlg .catnav{border-right:1px solid var(--border);padding:var(--sp2);background:var(--panel-alt)}
+.E .dlg .catnav a{display:block;padding:5px 10px;color:var(--text-2)}.E .dlg .catnav a[aria-current]{background:var(--selected);color:var(--text);font-weight:500}
+.E .dlg .srow{grid-template-columns:190px 1fr;padding:8px 14px}.E .dlg .srow p{display:none}
+.E .dlg .foot{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--panel-alt);border-top:1px solid var(--border-strong)}
+
+.sect{padding:var(--sp5) var(--sp4);border-top:1px solid var(--border)}
+.sect-h{display:flex;align-items:baseline;gap:var(--sp3);margin:0 0 var(--sp3)}
+.sect-h h2{margin:0;font-size:16px}
+.comp{display:flex;flex-wrap:wrap;gap:var(--sp3);align-items:center}
+@media (max-width:900px){.A,.B,.E .body,.A .cols,.A .setgrid,.B .setgrid,.D .setgrid,.C .content{grid-template-columns:1fr}.A .kpis,.C .wall{grid-template-columns:1fr 1fr}.E .md{grid-template-columns:1fr}}
+</style>
+</head>
+<body data-font="win">
+<div class="cmp-bar">
+  <strong>LiveRecorder UI 比較プレビュー</strong>
+  <div class="grp" role="group" aria-label="案"><span class="lbl">案</span>
+    <button data-v="A">A Heritage</button><button data-v="B">B Precision</button><button data-v="C">C Monitor</button><button data-v="D">D Calm</button><button data-v="E">E Desktop</button></div>
+  <div class="grp" role="group" aria-label="見本"><span class="lbl">見本</span>
+    <button data-t="dash">ダッシュボード</button><button data-t="streamers">配信者一覧</button><button data-t="settings">設定</button><button data-t="parts">共通部品</button></div>
+  <div class="grp" role="group" aria-label="フォント"><span class="lbl">フォント</span>
+    <button data-f="win">Windows標準</button><button data-f="noto">Noto Sans JP</button></div>
+  <span class="lbl">架空データ・基準時刻 2026-11-25 13:20:52 JST・単一ライト・1440px 基準（<a href="#" id="all" style="text-decoration:underline">5案を縦に並べる</a>）</span>
+</div>
+<div class="cmp-info" id="info"></div>
+<div id="root"></div>
+
+<script>
+/* ========== 共通の架空データ ========== */
+const NOW = "13:20:52";
+const STREAMERS = [
+  {id:1,name:"しらゆきmio",acct:"mio_shirayuki",plat:"tiktok",state:"live",rec:true,cmt:true,elapsed:"01:12:08",seg:2,comments:1842,last:"3秒前",rate:"26/分",size:"2.4 GiB"},
+  {id:2,name:"ハルカ工房",acct:"haruka_koubou",plat:"twitcasting",state:"live",rec:true,cmt:true,elapsed:"00:34:51",seg:1,comments:317,last:"11秒前",rate:"9/分",size:"0.9 GiB"},
+  {id:3,name:"ねこやま ひろ",acct:"nekoyama_hiro",plat:"tiktok",state:"off",rec:false,cmt:false,elapsed:"—",seg:0,comments:0,last:"最終配信 昨日 22:41",rate:"—",size:"—"},
+  {id:4,name:"AOI Radio",acct:"aoi_radio",plat:"twitcasting",state:"warn",rec:false,cmt:false,elapsed:"—",seg:0,comments:0,last:"監視 UNKNOWN（429）",rate:"—",size:"—"},
+  {id:5,name:"そらのひかり",acct:"sora_hikari",plat:"tiktok",state:"off",rec:false,cmt:false,elapsed:"—",seg:0,comments:0,last:"最終配信 11/23 20:05",rate:"—",size:"—"},
+  {id:6,name:"Kenji ライブ",acct:"kenji_live_jp",plat:"twitcasting",state:"off",rec:false,cmt:false,elapsed:"—",seg:0,comments:0,last:"最終配信 11/21 19:30",rate:"—",size:"—"},
+];
+const PLAT = {tiktok:"TikTok",twitcasting:"ツイキャス"};
+const EVENTS = [
+  {t:"13:18:40",lv:"warn",m:"AOI Radio: 監視応答 429。60秒待機して再試行します"},
+  {t:"13:05:12",lv:"info",m:"ハルカ工房: 配信開始を検知。録画・コメント収集を開始"},
+  {t:"12:08:44",lv:"info",m:"しらゆきmio: 配信開始を検知。録画・コメント収集を開始"},
+  {t:"11:02:03",lv:"err",m:"ねこやま ひろ: 録画セグメント #3 の検証に失敗（invalid）。欠損として記録"},
+];
+const REC = [
+  {who:"ねこやま ひろ",when:"昨日 22:41",dur:"00:58:12",size:"1.8 GiB",st:"欠損あり"},
+  {who:"そらのひかり",when:"11/23 20:05",dur:"01:20:44",size:"2.6 GiB",st:"完了"},
+  {who:"Kenji ライブ",when:"11/21 19:30",dur:"02:03:09",size:"3.9 GiB",st:"完了"},
+];
+
+/* ========== アイコン（最小セット） ========== */
+const P={dash:'<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>',
+ tower:'<circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19 5a10 10 0 0 1 0 14M5 19A10 10 0 0 1 5 5"/>',
+ film:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 12h18M3 16h4M17 8h4M17 16h4"/>',
+ msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+ file:'<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+ act:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+ plus:'<path d="M12 5v14M5 12h14"/>',
+ warn:'<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>'};
+const ic=(n)=>`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${P[n]||''}</svg>`;
+const NAV=[["dash","dash","ダッシュボード"],["streamers","tower","配信者"],["rec","film","録画履歴"],["cmt","msg","コメント"],["speech","file","音声字幕"],["sys","act","システム状態"],["logs","file","ログ"],["settings","gear","設定"]];
+
+/* ========== 共通部品 ========== */
+const badge=(k,t,pulse)=>`<span class="badge ${k}${pulse?' pulse':''}"><span class="d"></span>${t}</span>`;
+const stBadges=(s)=> s.state==="live"? badge("live","配信中",1)+(s.rec?badge("rec","録画中",1):"")+(s.cmt?badge("cmt","コメント収集中",1):"")
+  : s.state==="warn"? badge("warn","状態不明") : badge("idle","オフライン");
+const platTag=(p)=>`<span class="plat">${PLAT[p]}</span>`;
+const tog=(on)=>`<span class="tog ${on?'on':''}" role="switch" aria-checked="${on}"></span>`;
+const liveList=STREAMERS.filter(s=>s.state==="live");
+const NAVHTML=(cur,cls)=>NAV.map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${ic(i)}<span>${l}</span></a>`).join("");
+
+/* ========== 設定（全案共通の項目） ========== */
+const CATS=["監視","録画・保存","コメント・SRT","音声字幕","表示","詳細設定"];
+function settingRows(compact){
+  const rows=[
+   ["TikTok 監視頻度","外部枠・コメント優先により実効頻度が下がる場合があります。上限 10 回/分。",`<span class="unit"><input class="inp" value="10" aria-label="TikTok 監視頻度"><span>回/分</span></span>`],
+   ["ツイキャス 監視頻度","上限 60 回/分。",`<span class="unit"><input class="inp" value="10" aria-label="ツイキャス 監視頻度"><span>回/分</span></span>`],
+   ["実効頻度（読み取り）","現在の外部残枠から算出。",`<span class="num"><b>TikTok 10 / ツイキャス 10</b> <span class="mute">回/分</span></span>`]];
+  return rows.map(r=>`<div class="srow"><div><b>${r[0]}</b><p>${r[1]}</p></div><div>${r[2]}</div></div>`).join("");
+}
+const fontRow=`<div class="srow"><div><b>フォント</b><p>保存前にプレビューで確認できます。</p></div><div class="row"><select class="inp"><option>Windows標準</option><option>Noto Sans JP</option></select></div></div>
+<div class="srow"><div><b>プレビュー</b></div><div class="fontprev">配信中 録画 12,345 件 / 2026-11-25 13:20 / TikTok・ツイキャス 日本語ABC123</div></div>`;
+const saveBar=(extra)=>`<div class="savebar"><span class="row mute" style="font-size:13px">${ic("clock")}未保存の変更 1 件（TikTok 監視頻度）</span><span class="row"><button class="btn ghost">変更を破棄</button><button class="btn primary">設定を保存</button></span></div>`;
+
+/* ========== 案ごとの定義 ========== */
+const INFO={
+ A:{n:"A  Heritage Console（既存UI継承型）",i:"fluxrozin/live-recorder のシェル・密度・トークン・設定を強く継承し、ライト単一・パルスバッジ・フォント2択へ適応。",pro:"既存と同じ操作感。実装負担が最小で、設定・共通部品を早く完成できる。",con:"最も“標準的”。KPIカードが均等に並び、情報の優先順位は弱め。",cost:"小（既存テンプレート・CSS構造を再利用）"},
+ B:{n:"B  Precision Workspace（高密度・精密型）",i:"Linear系。アイコンレール＋テーブル中心。件数の多い一覧を行密度と整列で比較・検索しやすくする。",pro:"一覧性・比較効率が高い。コメント/ログ/録画履歴の反復操作に強い。",con:"情報が詰まり、初見の状態把握は劣る。小さな操作部品への配慮が要る。",cost:"中（密度トークンと表部品を精緻化）"},
+ C:{n:"C  Operations Monitor（運用監視特化）",i:"上部ナビ＋全体ヘルス帯。稼働中セッションを状態タイルとして見せ、鮮度・異常を最優先で視認させる。",pro:"24時間運用の異常・古い情報を見落としにくい。稼働中の把握が最短。",con:"履歴/設定系の画面は別文法になりがちで、一貫性の維持に工夫が要る。",cost:"中〜大（タイル・鮮度表示・ヘルス帯の共通化）"},
+ D:{n:"D  Calm Studio（洗練・静穏型）",i:"Vercel/Raycast系。中央カラム・余白・タイポグラフィ重視で、枠を最小化。設定の読みやすさが高い。",pro:"落ち着いた高級感。長時間見ても疲れにくく、設定・本文閲覧に向く。",con:"一画面の情報量が少なく、同時比較・大量行の画面で多くスクロールする。",cost:"中（余白・文字階層の調整が成果を左右）"},
+ E:{n:"E  Functional Desktop（デスクトップ実用型）",i:"Windowsアプリ風。メニュー・ツールバー・ツリー・マスター/詳細・ステータスバー。反復操作と設定変更の効率重視。",pro:"一覧＋詳細を同時表示でき、操作が明示的。設定はOK/適用の慣れた流れ。",con:"Webとしての見映え・モバイル相性は劣り、独自レイアウトの実装量が多い。",cost:"大（ペイン構成・ツールバー・ステータスバーを新規設計）"},
+};
+
+/* ---------- A ---------- */
+const A={
+ shell:(cur,crumb,body)=>`<div class="A"><aside class="side"><div class="brand"><span class="logo rec"><i></i></span><div><b>Live Recorder</b><div class="sub">Operations Console</div></div></div>
+ <nav class="nav"><p class="gl">メイン</p>${NAV.slice(0,5).map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${ic(i)}<span>${l}</span></a>`).join("")}<p class="gl" style="margin-top:16px">システム</p>${NAV.slice(5).map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${ic(i)}<span>${l}</span></a>`).join("")}</nav></aside>
+ <div class="main"><div class="top"><span>${crumb}</span><span class="row">${ic("clock")}表示時点 ${NOW}</span></div><div class="content">${body}</div></div></div>`,
+ dash:()=>A.shell("dash","メイン / ダッシュボード",`
+  <div><h1 class="pt">ダッシュボード</h1></div>
+  <div class="alert"><b style="color:var(--rec)">× 注意</b><span>AOI Radio の監視が 429 で待機中（12:18 から）</span><span class="mute">最終監視 13:20:41</span><span class="mute">警告・エラー（24時間）<b style="color:var(--text)">2</b></span></div>
+  <div class="kpis">
+   <div class="panel kpi"><div class="row mute">${ic("tower")}監視対象</div><div class="v num">6</div><div class="sub">監視中 5 / 登録 6</div></div>
+   <div class="panel kpi"><div class="row mute">${ic("tower")}現在配信中</div><div class="v num" style="color:var(--live)">2</div><div class="sub">TikTok 1 / ツイキャス 1</div></div>
+   <div class="panel kpi"><div class="row mute">${ic("film")}録画中</div><div class="v num" style="color:var(--rec)">2</div><div class="sub">セグメント計 3</div></div>
+   <div class="panel kpi"><div class="row mute">${ic("msg")}コメント収集中</div><div class="v num" style="color:var(--cmt)">2</div><div class="sub">受信 2,159 件（本日）</div></div></div>
+  <div class="panel strip"><div><div class="sub">本日の配信</div><b class="num">4</b></div><div><div class="sub">本日のコメント</div><b class="num">2,159</b></div><div><div class="sub">録画総量</div><b class="num">84.2 GiB</b></div><div><div class="sub">D: 空き容量</div><b class="num">410.6 GiB</b></div></div>
+  <div class="cols"><div class="panel"><div class="panel-h"><h3>アクティブセッション <span class="plat">2</span></h3><span class="sub">更新 ${NOW} · 5秒ごと</span></div>
+   ${liveList.map(s=>`<div class="sess"><div class="cell2"><b>${s.name}</b><span class="sub">${platTag(s.plat)} @${s.acct}</span></div><div class="row wrap">${stBadges(s)}</div><div class="cell2 r num" style="text-align:right"><b>${s.elapsed}</b><span class="sub">${s.comments.toLocaleString()} 件 · ${s.size}</span></div></div>`).join("")}</div>
+   <div style="display:flex;flex-direction:column;gap:var(--sp4)"><div class="panel"><div class="panel-h"><h3>ストレージ</h3></div><div style="padding:var(--sp4)"><div class="row" style="justify-content:space-between;align-items:baseline"><span style="font-size:28px;font-weight:600">17<small style="font-size:12px;font-weight:400;color:var(--text-3)">% 使用</small></span><span class="sub num">84.2 / 494.8 GiB</span></div><div class="bar" style="margin:10px 0"><i style="width:17%"></i></div><div class="sub">最低空き容量 5.0 GiB</div></div></div>
+   <div class="panel"><div class="panel-h"><h3>直近の警告・エラー</h3><span class="sub">履歴 ›</span></div>${EVENTS.filter(e=>e.lv!=="info").map(e=>`<div style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px"><span class="sub num">${e.t}</span> ${e.lv==="err"?badge("err","エラー"):badge("warn","警告")}<div>${e.m}</div></div>`).join("")}</div></div></div>`),
+ streamers:()=>A.shell("streamers","メイン / 配信者",`<div class="row" style="justify-content:space-between"><h1 class="pt">配信者</h1><button class="btn primary">${ic("plus")}配信者を追加</button></div>
+  <div class="row wrap"><span class="inp row" style="width:280px">${ic("search")}<span class="mute">名前・ID で検索</span></span><select class="inp"><option>すべてのサービス</option></select><select class="inp"><option>すべての状態</option></select><span class="sub" style="margin-left:auto">6 件中 6 件</span></div>
+  <div class="panel"><table><thead><tr><th>配信者</th><th>状態</th><th>監視</th><th>録画</th><th>コメント</th><th>最終確認</th><th></th></tr></thead><tbody>
+  ${STREAMERS.map(s=>`<tr><td><div class="cell2"><b>${s.name}</b><span class="sub">${platTag(s.plat)} @${s.acct}</span></div></td><td><div class="row wrap">${stBadges(s)}</div></td><td>${tog(s.state!=="off"||s.id!==5)}</td><td>${tog(true)}</td><td>${tog(true)}</td><td class="sub">${s.last}</td><td class="r"><button class="btn sm">編集</button></td></tr>`).join("")}</tbody></table></div>`),
+ settings:()=>A.shell("settings","システム / 設定",`<h1 class="pt">設定</h1><div class="setgrid"><nav class="catnav">${CATS.map((c,i)=>`<a href="#" ${i===0?'aria-current="page"':''}>${ic("gear")}${c}</a>`).join("")}</nav>
+  <div style="display:flex;flex-direction:column;gap:var(--sp4)"><div class="panel"><div class="panel-h"><h3>監視 <span class="sub">Monitoring</span></h3></div>${settingRows()}</div><div class="panel"><div class="panel-h"><h3>表示</h3></div>${fontRow}</div>${saveBar()}</div></div>`)
+};
+
+/* ---------- B ---------- */
+const B={
+ shell:(cur,body,title)=>`<div class="B"><aside class="rail">${NAV.map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${ic(i)}<span>${l.length>5?l.slice(0,5):l}</span></a>`).join("")}</aside>
+ <div><div class="top"><b>${title}</b><span class="cmd">${ic("search")}検索・コマンド（/）</span><span style="margin-left:auto" class="row mute">${ic("clock")}${NOW}</span></div><div class="content">${body}</div></div></div>`,
+ dash:()=>B.shell("dash",`
+  <div class="inline-stats"><span><b class="num">6</b>監視対象</span><span><b class="num" style="color:var(--live)">2</b>配信中</span><span><b class="num" style="color:var(--rec)">2</b>録画中</span><span><b class="num" style="color:var(--cmt)">2</b>コメント収集中</span><span><b class="num">2,159</b>本日のコメント</span><span><b class="num">410.6</b>GiB 空き</span><span>${badge("warn","警告 2（24時間）")}</span></div>
+  <div class="panel tbl"><div class="panel-h" style="padding:8px 12px"><h3>アクティブセッション</h3><span class="row"><button class="btn sm">停止</button><button class="btn sm">詳細</button></span></div>
+   <table><thead><tr><th>配信者</th><th>サービス</th><th>状態</th><th class="r">経過</th><th class="r">セグ</th><th class="r">コメント</th><th class="r">レート</th><th>最終受信</th><th class="r">容量</th></tr></thead><tbody>
+   ${liveList.map(s=>`<tr><td><b>${s.name}</b> <span class="sub">@${s.acct}</span></td><td>${platTag(s.plat)}</td><td><div class="row">${stBadges(s)}</div></td><td class="r num">${s.elapsed}</td><td class="r num">${s.seg}</td><td class="r num">${s.comments.toLocaleString()}</td><td class="r num">${s.rate}</td><td class="sub">${s.last}</td><td class="r num">${s.size}</td></tr>`).join("")}</tbody></table></div>
+  <div class="split"><div class="panel tbl"><div class="panel-h" style="padding:8px 12px"><h3>最近の録画</h3><span class="sub">すべて表示 ›</span></div><table><tbody>${REC.map(r=>`<tr><td><b>${r.who}</b><div class="sub">${r.when}</div></td><td class="r num">${r.dur}</td><td class="r num">${r.size}</td><td>${r.st==="完了"?badge("live","完了"):badge("warn","欠損あり")}</td></tr>`).join("")}</tbody></table></div>
+  <div class="panel tbl"><div class="panel-h" style="padding:8px 12px"><h3>イベント</h3><span class="sub">ログ ›</span></div><table><tbody>${EVENTS.map(e=>`<tr><td class="sub num" style="white-space:nowrap">${e.t}</td><td>${e.lv==="err"?badge("err","エラー"):e.lv==="warn"?badge("warn","警告"):badge("idle","情報")}</td><td>${e.m}</td></tr>`).join("")}</tbody></table></div></div>`,"ダッシュボード"),
+ streamers:()=>B.shell("streamers",`<div class="row wrap"><span class="inp sm row" style="width:260px">${ic("search")}<span class="mute">検索</span></span><select class="inp sm"><option>サービス: すべて</option></select><select class="inp sm"><option>状態: すべて</option></select><span class="sub">6 / 6 件</span><button class="btn sm primary" style="margin-left:auto">${ic("plus")}追加</button></div>
+  <div class="panel tbl"><table><thead><tr><th style="width:24px"><input type="checkbox" aria-label="全選択"></th><th>配信者</th><th>ID</th><th>サービス</th><th>状態</th><th>監視</th><th>録画</th><th>コメ</th><th>最終確認</th><th class="r">順</th></tr></thead><tbody>
+  ${STREAMERS.map((s,i)=>`<tr><td><input type="checkbox" aria-label="選択"></td><td><b>${s.name}</b></td><td class="mono">${s.acct}</td><td>${platTag(s.plat)}</td><td><div class="row">${stBadges(s)}</div></td><td>${tog(true)}</td><td>${tog(true)}</td><td>${tog(true)}</td><td class="sub">${s.last}</td><td class="r num">${i+1}</td></tr>`).join("")}</tbody></table></div>`,"配信者"),
+ settings:()=>B.shell("settings",`<div class="setgrid"><nav class="catnav">${CATS.map((c,i)=>`<a href="#" ${i===0?'aria-current="page"':''}>${c}</a>`).join("")}</nav><div style="display:flex;flex-direction:column;gap:var(--sp3)">
+  <div class="panel">${settingRows()}${fontRow}</div>${saveBar()}</div></div>`,"設定")
+};
+
+/* ---------- C ---------- */
+const C={
+ shell:(cur,body)=>`<div class="C"><div class="topnav"><b style="color:#fff">Live Recorder</b>${NAV.map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${l}</a>`).join("")}</div>
+ <div class="health"><span class="it">${badge("live","監視 稼働中",1)}</span><span class="it"><b>最終監視</b> 13:20:41 <span class="age">(11秒前)</span></span><span class="it"><b>DB</b> 正常</span><span class="it"><b>ffmpeg</b> 9.1</span><span class="it"><b>外部枠</b> TikTok 残 ○ / ツイキャス 残 ○</span><span class="it">${badge("warn","警告 2")}</span><span style="margin-left:auto" class="age">表示時点 ${NOW}</span></div>${body}</div>`,
+ dash:()=>C.shell("dash",`<div class="content"><div style="display:flex;flex-direction:column;gap:var(--sp4)">
+  <div class="row" style="justify-content:space-between"><h1 class="pt">稼働中のセッション</h1><span class="sub">鮮度 = 最終受信からの経過。30秒超で古い表示になります</span></div>
+  <div class="wall">${liveList.map(s=>`<div class="panel tile rec"><div class="row" style="justify-content:space-between"><div class="cell2"><b style="font-size:16px">${s.name}</b><span class="sub">${platTag(s.plat)} @${s.acct}</span></div><div class="row wrap" style="justify-content:flex-end">${stBadges(s)}</div></div>
+   <div class="meters"><div class="m"><span class="sub">録画経過</span><b class="num">${s.elapsed}</b></div><div class="m"><span class="sub">コメント</span><b class="num">${s.comments.toLocaleString()}</b></div><div class="m"><span class="sub">最終受信</span><b class="num">${s.last}</b></div></div>
+   <div><div class="fresh"></div><div class="sub" style="display:flex;justify-content:space-between;margin-top:4px"><span>セグメント ${s.seg} · ${s.size}</span><span>${s.rate}</span></div></div></div>`).join("")}</div>
+  <h2 style="margin:8px 0 0;font-size:15px">その他の監視対象</h2>
+  <div class="small-wall">${STREAMERS.filter(s=>s.state!=="live").map(s=>`<div class="mini" style="${s.state==="warn"?'border-color:rgb(146 87 10 / 45%);background:rgb(146 87 10 / 5%)':''}"><b>${s.name}</b><div class="sub">${PLAT[s.plat]}</div><div style="margin-top:6px">${stBadges(s)}</div><div class="sub" style="margin-top:6px">${s.last}</div></div>`).join("")}</div></div>
+  <div class="rail-r"><div class="panel"><div class="panel-h"><h3>異常・注意</h3></div>${EVENTS.map(e=>`<div class="ev"><span class="sub num">${e.t}</span><span>${e.lv==="err"?badge("err","エラー")+" ":e.lv==="warn"?badge("warn","警告")+" ":""}${e.m}</span></div>`).join("")}</div>
+   <div class="panel"><div class="panel-h"><h3>保存先 D:</h3></div><div style="padding:var(--sp4)"><div class="row" style="justify-content:space-between"><b class="num" style="font-size:20px">410.6 GiB</b><span class="sub">空き</span></div><div class="bar" style="margin:8px 0"><i style="width:17%"></i></div><div class="sub">録画総量 84.2 GiB · 最低空き 5.0 GiB</div></div></div></div></div>`),
+ streamers:()=>C.shell("streamers",`<div class="content" style="grid-template-columns:1fr"><div class="row" style="justify-content:space-between"><h1 class="pt">配信者</h1><span class="row"><span class="inp row" style="width:240px">${ic("search")}<span class="mute">検索</span></span><button class="btn primary">${ic("plus")}追加</button></span></div>
+  <div class="panel">${STREAMERS.map(s=>`<div style="display:grid;grid-template-columns:6px minmax(0,1.2fr) minmax(0,1.6fr) 1fr auto;gap:var(--sp4);align-items:center;border-bottom:1px solid var(--border);padding-right:var(--sp4)"><i style="align-self:stretch;background:${s.state==="live"?'var(--live)':s.state==="warn"?'var(--warn)':'var(--border)'}"></i><div class="cell2" style="padding:12px 0"><b>${s.name}</b><span class="sub">${platTag(s.plat)} @${s.acct}</span></div><div class="row wrap">${stBadges(s)}</div><span class="sub">${s.last}</span><button class="btn sm">編集</button></div>`).join("")}</div></div>`),
+ settings:()=>C.shell("settings",`<div class="setgrid"><nav class="catnav">${CATS.map((c,i)=>`<a href="#" ${i===0?'aria-current="page"':''}><span>${c}</span>${i===0?'<span class="badge warn" style="height:18px">未保存</span>':i===5?'<span class="sub">再起動後</span>':''}</nav>`.replace("</nav>","</a>")).join("")}</nav>
+  <div style="display:flex;flex-direction:column;gap:var(--sp4)"><div class="panel"><div class="panel-h"><h3>監視</h3><span class="sub">保存後: 次回巡回から反映</span></div>${settingRows()}</div><div class="panel"><div class="panel-h"><h3>表示</h3><span class="sub">保存後すぐ反映</span></div>${fontRow}</div>${saveBar()}</div></div>`)
+};
+
+/* ---------- D ---------- */
+const D={
+ shell:(cur,body)=>`<div class="D"><div class="top"><span class="mk"><span class="badge rec pulse" style="border:0;background:none;padding:0"><span class="d"></span></span>Live Recorder</span>${NAV.map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${l}</a>`).join("")}</div><div class="content">${body}</div></div>`,
+ dash:()=>D.shell("dash",`
+  <div><h1 class="pt">2 件が配信中・録画中です</h1><div class="mute" style="margin-top:4px">${NOW} 時点 · 監視 6 件のうち 5 件が正常</div></div>
+  <div class="nums"><div class="n"><span class="sub">本日のコメント</span><b class="num">2,159</b></div><div class="n"><span class="sub">録画総量</span><b class="num">84.2 <small style="font-size:13px;font-weight:400">GiB</small></b></div><div class="n"><span class="sub">空き容量</span><b class="num">410.6 <small style="font-size:13px;font-weight:400">GiB</small></b></div><div class="n"><span class="sub">警告（24時間）</span><b class="num" style="color:var(--warn)">2</b></div></div>
+  <section><h2>稼働中</h2><div class="list">${liveList.map(s=>`<div><div class="cell2"><b style="font-size:16px;font-weight:500">${s.name}</b><span class="sub">${PLAT[s.plat]} · @${s.acct} · 経過 <span class="num">${s.elapsed}</span> · コメント <span class="num">${s.comments.toLocaleString()}</span> 件</span></div><div class="row wrap">${stBadges(s)}</div></div>`).join("")}</div></section>
+  <section><h2>注意が必要</h2><div class="list">${EVENTS.filter(e=>e.lv!=="info").map(e=>`<div><div><span class="sub num">${e.t}</span><div>${e.m}</div></div>${e.lv==="err"?badge("err","エラー"):badge("warn","警告")}</div>`).join("")}</div></section>`),
+ streamers:()=>D.shell("streamers",`<div class="row" style="justify-content:space-between"><h1 class="pt">配信者</h1><button class="btn primary">${ic("plus")}追加</button></div><div class="row"><span class="inp row" style="width:100%;max-width:420px">${ic("search")}<span class="mute">名前・ID で検索</span></span></div>
+  <div class="list">${STREAMERS.map(s=>`<div><div class="cell2"><b style="font-size:15px;font-weight:500">${s.name}</b><span class="sub">${PLAT[s.plat]} · @${s.acct} · ${s.last}</span></div><div class="row">${stBadges(s)}<button class="btn sm" style="margin-left:8px">編集</button></div></div>`).join("")}</div>`),
+ settings:()=>D.shell("settings",`<h1 class="pt">設定</h1><div class="setgrid"><nav class="catnav">${CATS.map((c,i)=>`<a href="#" ${i===0?'aria-current="page"':''}>${c}</a>`).join("")}</nav>
+  <div><h2>監視</h2>${settingRows()}<h2 style="margin-top:var(--sp8)">表示</h2>${fontRow}${saveBar()}</div></div>`)
+};
+
+/* ---------- E ---------- */
+const E={
+ shell:(cur,body,toolbar,status)=>`<div class="E"><div class="menubar"><span>ファイル</span><span>表示</span><span>操作</span><span>ツール</span><span>ヘルプ</span></div>
+ <div class="toolbar">${toolbar||""}</div><div class="body"><nav class="tree">${NAV.map(([k,i,l])=>`<a href="#" ${k===cur?'aria-current="page"':''}>${ic(i)}<span>${l}</span></a>`).join("")}</nav>${body}</div>
+ <div class="status"><span>${badge("live","監視 稼働中",1)}</span><span>配信中 2 / 録画中 2</span><span>D: 空き 410.6 GiB</span><span style="margin-left:auto">表示時点 ${NOW}</span></div></div>`,
+ dash:()=>{const s=STREAMERS[0];return E.shell("dash",`<div class="md"><div class="listp">${STREAMERS.map((x,i)=>`<div class="it ${i===0?'sel':''}"><span>${x.state==="live"?badge("live","配信中",1):x.state==="warn"?badge("warn","不明"):badge("idle","OFF")}</span><div class="cell2"><b>${x.name}</b><span class="sub">${PLAT[x.plat]} @${x.acct}</span></div><span class="sub num">${x.state==="live"?x.elapsed:""}</span></div>`).join("")}</div>
+  <div class="detail"><h1 class="pt" style="font-size:18px">${s.name}</h1><div class="row wrap">${stBadges(s)}</div>
+   <dl class="kv"><dt>サービス</dt><dd>${PLAT[s.plat]}</dd><dt>アカウント</dt><dd class="mono">@${s.acct}</dd><dt>録画経過</dt><dd class="num">${s.elapsed}</dd><dt>セグメント</dt><dd class="num">${s.seg}（${s.size}）</dd><dt>コメント</dt><dd class="num">${s.comments.toLocaleString()} 件 / ${s.rate}</dd><dt>最終受信</dt><dd>${s.last}</dd><dt>保存先</dt><dd class="mono">D:\\LiveRecorder\\mio_shirayuki\\…</dd></dl>
+   <div class="row"><button class="btn danger">録画を停止</button><button class="btn">詳細を開く</button></div></div></div>`,
+  `<button class="btn">${ic("plus")}追加</button><button class="btn">更新</button><span style="flex:1"></span><span class="inp row" style="width:220px;height:28px">${ic("search")}<span class="mute">検索</span></span>`);},
+ streamers:()=>E.shell("streamers",`<div class="listp" style="border:0"><table><thead><tr><th>配信者</th><th>サービス</th><th>状態</th><th>監視</th><th>録画</th><th>コメント</th><th>最終確認</th></tr></thead><tbody>${STREAMERS.map((s,i)=>`<tr style="${i===1?'background:var(--selected)':''}"><td><b>${s.name}</b></td><td>${PLAT[s.plat]}</td><td><div class="row">${stBadges(s)}</div></td><td><input type="checkbox" checked></td><td><input type="checkbox" checked></td><td><input type="checkbox" checked></td><td class="sub">${s.last}</td></tr>`).join("")}</tbody></table></div>`,
+  `<button class="btn">${ic("plus")}登録…</button><button class="btn">編集…</button><button class="btn danger">削除…</button><span style="flex:1"></span><span class="inp row" style="width:220px">${ic("search")}<span class="mute">検索</span></span>`),
+ settings:()=>E.shell("settings",`<div class="dlg"><div class="tabs"><a href="#" aria-current="page">全般</a><a href="#">ネットワーク</a><a href="#">詳細</a></div><div class="setgrid"><nav class="catnav">${CATS.map((c,i)=>`<a href="#" ${i===0?'aria-current="page"':''}>${c}</a>`).join("")}</nav><div>${settingRows()}${fontRow}</div></div>
+   <div class="foot"><span class="row mute">${ic("clock")}未保存 1 件</span><span class="row"><button class="btn primary">OK</button><button class="btn">キャンセル</button><button class="btn">適用</button></span></div></div>`,
+  `<span class="sub">設定</span>`)
+};
+const IMPL={A,B,C,D,E};
+
+/* ---------- 共通部品見本 ---------- */
+function parts(){return `<div class="sect" style="background:var(--bg);min-height:700px"><div class="sect-h"><h2>共通部品（全案共通の確定条件）</h2><span class="sub">案ごとにサイズ・密度・角丸が変わります</span></div>
+ <div class="panel" style="padding:var(--sp5);display:flex;flex-direction:column;gap:var(--sp5)">
+ <div><div class="sub" style="margin-bottom:8px">状態バッジ（ドット＋文字。配信中=緑・録画中=赤・コメント収集中=青。稼働中のみパルス、動き抑制時は静止）</div><div class="comp">${badge("live","配信中",1)}${badge("rec","録画中",1)}${badge("cmt","コメント収集中",1)}${badge("warn","状態不明")}${badge("idle","オフライン")}${badge("err","エラー")}</div></div>
+ <div><div class="sub" style="margin-bottom:8px">ボタン・入力・トグル</div><div class="comp"><button class="btn primary">${ic("plus")}配信者を追加</button><button class="btn">編集</button><button class="btn ghost">変更を破棄</button><button class="btn danger">録画を停止</button><button class="btn sm">小</button><span class="unit"><input class="inp" value="10"><span>回/分</span></span>${tog(true)}${tog(false)}</div></div>
+ <div><div class="sub" style="margin-bottom:8px">フォント（2択）・数値整列</div><div class="fontprev">配信中 録画 12,345 件 / 1,234.5 GiB / 2026-11-25 13:20:52 / TikTok・ツイキャス・日本語ABC123</div></div></div></div>`}
+
+/* ========== 描画 ========== */
+let V=(location.hash.match(/v=([A-E])/)||[])[1]||"A", T=(location.hash.match(/t=(\w+)/)||[])[1]||"dash", ALL=false;
+function view(v,t){return t==="parts"?parts():IMPL[v][t==="dash"?"dash":t]()}
+function render(){
+  document.querySelectorAll("[data-v]").forEach(b=>b.setAttribute("aria-pressed",String(!ALL&&b.dataset.v===V)));
+  document.querySelectorAll("[data-t]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.t===T)));
+  document.querySelectorAll("[data-f]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.f===document.body.dataset.font)));
+  const list=ALL?["A","B","C","D","E"]:[V];
+  document.getElementById("root").innerHTML=list.map(v=>`${ALL?`<div class="cmp-info" style="background:#E8EBF0"><div><h2>${INFO[v].n}</h2></div></div>`:""}<div class="stage" id="stage-${v}">${view(v,T)}</div>`).join("");
+  const I=INFO[V];
+  document.getElementById("info").style.display=ALL?"none":"";
+  document.getElementById("info").innerHTML=`<div><h2>${I.n}</h2><p>${I.i}</p></div><div><h3>利点</h3><p>${I.pro}</p></div><div><h3>欠点</h3><p>${I.con}</p></div><div><h3>相対的な実装負担</h3><p>${I.cost}</p></div>`;
+  history.replaceState(null,"",`#v=${V}&t=${T}`);
+}
+document.addEventListener("click",e=>{const b=e.target.closest("button[data-v],button[data-t],button[data-f]");if(b){if(b.dataset.v){V=b.dataset.v;ALL=false}if(b.dataset.t)T=b.dataset.t;if(b.dataset.f)document.body.dataset.font=b.dataset.f;render();}
+  if(e.target.id==="all"){e.preventDefault();ALL=!ALL;render()}
+  if(e.target.closest(".stage a[href='#']"))e.preventDefault();});
+window.addEventListener("hashchange",()=>{const m=location.hash.match(/v=([A-E])/),t=location.hash.match(/t=(\w+)/);if(m&&m[1]!==V||t&&t[1]!==T){V=m?m[1]:V;T=t?t[1]:T;render()}});
+render();
+</script>
+</body>
+</html>

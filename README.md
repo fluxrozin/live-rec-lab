@@ -1,56 +1,51 @@
 # LiveRecorder
 
-TikTok LIVE・ツイキャスのライブ配信を自動監視し、動画・コメント・字幕をWindowsドライブに保存する個人利用向けローカルWebアプリケーション。Windows 11 / WSL2 Ubuntu 24.04、Python 3.12 / uv、SQLite WAL、FastAPI / Jinja2 / HTMX。日本語PC向け8画面。録画とコメントは独立し、収集収束後に字幕を生成する。保存期限・削除は動画・字幕・コメント・履歴を含む配信アーカイブ単位とし、Webで動画再生や媒体ダウンロードは行わない。
+TikTok LIVE・ツイキャスのライブ配信を自動監視し、動画・コメント・字幕（コメントSRT／音声SRT／統合ASS）をWindowsドライブへ保存する個人利用向けローカルWebアプリケーション。Windows 11 / WSL2 Ubuntu 24.04 上の単一Pythonプロセス（FastAPI + Jinja2/HTMX + SQLite WAL）として稼働し、日本語の8画面（ダッシュボード・配信者・録画履歴・コメント・音声字幕・設定・システム状態・ログ）で操作する。動画のWeb再生・ダウンロードはない。
 
-## 開発開始
+実装状態と実機確認の範囲は [tasks.md](tasks.md)、導入・運用・障害対応は [docs/manual.md](docs/manual.md)。
 
-このZIPは初期実装前のスターターキット。AIエージェントに次の一文を指示する。
+## 構成
 
-```text
-prompts/implement.md を実行し、実装可能な初期機能をすべて完成させてください。
+| 領域 | 採用 |
+|---|---|
+| 言語・環境 | CPython 3.12（`.python-version`）、uv、`pyproject.toml` / `uv.lock` |
+| Web | FastAPI + Uvicorn（1 worker）、Jinja2 + HTMX 2.0.4（`web/static` に同梱、BSD-0）、固定ポート直バインド |
+| DB | SQLite（WAL）、SQLAlchemy 2、Alembic 初期revision（`src/live_rec_lab/migrations`） |
+| TikTok | 公開room API（監視）、Streamlink／yt-dlp（録画）、TikTokLive + Euler Stream 無料署名（コメント） |
+| ツイキャス | 公式API v2（Basic認証）の current_live／comments、公式HLSをffmpegでstream copy（代替: Streamlink） |
+| 音声 | faster-whisper（`speech` extra、CUDA優先・CPUは明示選択のみ）。推論は専用の子プロセス |
+| メディア | ffmpeg / ffprobe（実プロセス環境で解決した組を診断） |
+
+主要モジュール: `config.py`（モード別の設定解決と隔離境界）、`external.py`（外部通信の既定拒否・共通ロック・永続予算）、`storage.py`（Windows安全名・非上書き確定）、`supervisor.py`（監視→セッション→録画/コメント→収束）、`recording.py` / `comments.py` / `srt.py` / `speech.py` / `ass.py`、`archives.py`（削除・容量・照合）、`restore.py`（停止中の手動復元）、`web/`（画面とAPI）。
+
+## 起動
+
+```bash
+uv sync --locked --extra speech      # 音声を使わない場合は --extra speech を省く
+cp .env.example .env && chmod 600 .env   # 資格情報を設定（任意）
+uv run --locked live-rec-lab start       # 通常運用 http://127.0.0.1:8082
+uv run --locked live-rec-lab start --dev # 隔離（開発者モード）http://127.0.0.1:8083、外部通信は既定で無効
 ```
 
-初期一気通貫実装は直接実装とし、Spec Kitは使用しない（初期化・Skill実行・Feature生成なし）。初期完成後の保守・機能追加で利用者が希望する場合のみ利用できる。実装中の不足・不明点は公開情報のWeb検索で自律的に調査し、根拠を `tasks.md` に記録する。UIは [既存LiveRecorder](https://github.com/fluxrozin/live-recorder) を最優先リファレンスとし、`docs/ui-spec.md` の具体的な標準設計を起点に、既存UI継承型・高密度／精密型・運用監視特化型・洗練／静穏型・デスクトップ実用型を標準候補とする5案を比較用プレビューで提示する。シェル・ダッシュボード・配信者一覧・設定・主要部品を比較できる部分見本でよく、全案の全画面実装は不要。利用者が1案を明示選択し、回答後に同じ作業を再開し、採用案だけを製品化する。Modern Operations Console を目指し、共通デザインシステムと代表3画面（ダッシュボード・配信者一覧・設定）の実表示・操作を調整してから全画面へ展開する（追加承認不要）。実配信／GPU／Windows試験の許可は `prompts/implement.md` の試験許可欄 を参照。未許可の試験は該当範囲のみ保留。
-
-初期実装は依存関係に従って進める。最小起動と最小安全基盤を先行し、TikTok・ツイキャス・UI探索の独立作業を進め、運用機能は必要な時点で完成させる。初期残件ゼロは確定機能と通常利用・安全性の欠陥を対象とし、等価な簡易方式や低リスクの追加品質延期を認める（要求§1.3）。UI比較はスタンドアロンHTMLを標準とし、選択時に必要な試験許可をまとめられる。
+`status` / `url` / `stop` / `backup DEST` / `config get|set web_port` / `diagnose --json` / `restore prepare|finish|abort` は `--dev` で隔離対象を選べる。詳細な手順・設定・障害対応は [docs/manual.md](docs/manual.md)。
 
 ## 文書
 
-| 文書                     | 役割                                       |
-| ------------------------ | ------------------------------------------ |
-| `AGENTS.md`              | 短い共通開発原則                           |
-| `docs/requirements.md`   | 製品の確定機能と安全性                     |
-| `docs/ui-spec.md`        | UIの確定条件                               |
-| `docs/system-design.md`  | 基本設計・公開API・CLI・診断契約・導入条件 |
-| `prompts/implement.md`   | 一気通貫の開発指示                         |
-| `prompts/redesign-ui.md` | 独立したUI探索・再設計                     |
+| 文書 | 役割 |
+|---|---|
+| `docs/requirements.md` | 製品の確定機能と安全性（正本） |
+| `docs/ui-spec.md` | UIの確定条件（正本） |
+| `docs/system-design.md` | 基本設計・公開API・CLI・診断契約 |
+| `docs/manual.md` | 導入・運用・障害対応（実装と実測に基づく） |
+| `ui/design.md` | UIの5案比較と採用記録（採用: A案） |
+| `tasks.md` | 機能ごとの実装状態・動作確認・利用可否・再開点 |
+| `AGENTS.md` / `prompts/` | 開発の指示 |
 
-## 起動と利用（実装後の目標）
+## テスト
 
-通常は `uv sync`、`uv run live-rec-lab start`、`http://127.0.0.1:8082`。開発者は `uv run live-rec-lab start --dev`（隔離8083、外部配信通信既定OFF、録画は専用Linux領域、明示許可済みWindows専用試験フォルダのみ例外）。`status`、`url`、`stop`、`diagnose --json`、`backup DEST`、停止中の `config get/set web_port` を実装する。これらは未実装のスターター段階では利用できない場合がある。正確な依存・起動・権限・Windowsサインイン後起動・字幕・バックアップ／復元手順は実装後のコードと実機結果から本READMEとmanualを完成させる。
+```bash
+uv run --locked pytest -n auto -m "not serial and not live and not hardware"
+uv run --locked pytest --run-hardware tests/test_windows_media.py tests/test_speech.py   # D:\LiveRecorder の許可とGPU・モデルが必要
+```
 
-通常DBと録画を分離し、既存保存先・稼働環境・秘密を保護する。実機・実配信・GPU未検証を成功と扱わない。
-
-スターターの `.python-version` は3.12。初期は最小パッケージ・依存から起動を成立させ、採用アダプターを段階的に追加し、最終的にuv.lockと同期する。`.env.example` はスターターには同梱せず、実装時に通常／隔離の設定例（コメントのみ・秘密なし）として作成する。実際の `.env` と `.env.dev` は分離して必要なキーだけ設定し、隔離では `DEV_` キーのみ使用する。例示値は利用許可を付与しない。
-
-## 中断・再開
-
-UI選択・外部制限・使用量上限・強制中断時は、同じブランチ・作業ツリーと既存記録を再利用する。実装済みコード・最新の実機結果を確認して次の残件へ。実装可能な残件の列挙で完了としない。UI選択済みなら再比較不要。再開時は差分、作業メモ、稼働プロセスと実行版、直近の結果を確認し、次の未完了機能に進む。選択済みUI・完了済み調査・計画・試験を形式的に再生成せず、修正箇所と関連する最小回帰を実施する。
-
-## Spec Kitによる初期完成後の保守・変更管理（任意）
-
-初期完成後、利用者がSpec Kitの使用を希望する新規機能・影響が広い変更では Specify→Plan→Tasks→Implement を基本とし、必要なClarify/Checklist/Analyze/Convergeを選択する。小規模バグは再現→原因→修正→実機→最小回帰で十分。大規模変更のみ必要に応じ全SDD工程。実装で確定した設計と製品要件を変更の基準にする。既存Feature・憲法・計画がある場合は新規作成せず活用し、本書と開発指示に従う。採用したSkillの契約やGit制約は守る。公式の現在ブランチ対応手段または許容された手動経路を利用する。無断ブランチ・commit等は禁止。
-
-Spec Kitのインストールや初期化は実行環境・採用版でコマンドを確認して行う。参考：<https://github.com/github/spec-kit>。既存プロジェクトで初期化する際は差分を保護し、生成物の上書きを避ける。初期一気通貫実装ではこれらを生成しない。
-
-## UI単独変更
-
-`prompts/redesign-ui.md` を実行。全面再設計は既存UI継承型を含む5案から利用者が選択、局所改善は採用デザインを維持する。UIの変更だけで録画・コメント等のコアを再実装しない。現行のUI・バックエンド契約を確認し、実ブラウザ表示と操作を見て明確な不整合を修正・再確認する。
-
-## 実装後の運用マニュアル
-
-- Windows 11 / WSL2 / Python 3.12 / uv / FFmpeg / speech extra・CUDAの導入。
-- 通常／開発者の起動・停止、固定ポート・localhost・隔離、既存アプリと保存先の保護、Windowsサインイン後の起動。
-- TikTok／ツイキャスの認証・許可・監視・録画・コメント、収集終了後の3種字幕と手動再生成、8画面の利用、設定・ログ・診断。
-- Windows媒体の保存・命名・容量・共通アーカイブ保存期限と一括削除、安全なバックアップ・停止中の手動復元（退避・マーカー・手動確認）。バックアップに個人情報が残ることを明示。
-- 障害時の切り分け、復旧、実機検証済み・未検証の範囲。開発者向けの安全なcurl/Python操作と読取診断、隔離SQLite直接調査、必要時のバックアップコピー読取。正式なスナップショット取込機能は不要。
+実配信の試験は `--run-live` と利用者の許可が必要（マーカーだけでは接続しない）。

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="l-page-head"><h1>ダッシュボード</h1></div>
+{% if mode == 'developer' and not app_ctx.gate.allow_live %}<div class="c-alert c-alert--warn">{{ ui.icon("warn") }}隔離環境（外部通信は無効）です。実配信に接続するには <span class="u-mono">--allow-live</span> を指定して起動します。</div>{% endif %}
+{% if d.warning_count %}<div class="c-alert c-alert--err"><b style="color:var(--rec)">× 注意</b><span>{{ d.warnings[0].message }}</span><span class="u-mute">警告・エラー（{{ {'24h':'24時間','7d':'7日','30d':'30日'}[d.period] }}）<b class="u-num">{{ d.warning_count }}</b></span></div>{% endif %}
+<div class="c-kpis">
+  <div class="c-panel c-kpi"><div class="c-kpi__label">{{ ui.icon("tower") }}監視対象</div><div class="c-kpi__value u-num">{{ d.streamers_total }}</div><div class="u-sub">監視中 {{ d.streamers_monitored }} / 登録 {{ d.streamers_total }}</div></div>
+  <div class="c-panel c-kpi"><div class="c-kpi__label">{{ ui.icon("tower") }}現在配信中</div><div class="c-kpi__value u-num" style="color:var(--live)">{{ d.live }}</div><div class="u-sub">監視中のアカウントのみ</div></div>
+  <div class="c-panel c-kpi"><div class="c-kpi__label">{{ ui.icon("film") }}録画中</div><div class="c-kpi__value u-num" style="color:var(--rec)">{{ d.recording }}</div><div class="u-sub">開始中・再接続中を含む</div></div>
+  <div class="c-panel c-kpi"><div class="c-kpi__label">{{ ui.icon("msg") }}コメント収集中</div><div class="c-kpi__value u-num" style="color:var(--cmt)">{{ d.collecting }}</div><div class="u-sub">接続中・再接続中を含む</div></div>
+</div>
+<div class="c-panel c-strip">
+  <div><div class="u-sub">本日の配信</div><b class="u-num">{{ d.today_sessions }}</b></div>
+  <div><div class="u-sub">本日のコメント</div><b class="u-num">{{ d.today_comments }}</b></div>
+  <div><div class="u-sub">管理中の録画量</div><b class="u-num">{{ d.managed_bytes|size }}</b></div>
+  <div><div class="u-sub">保存先の空き容量</div><b class="u-num">{{ d.disk_free|size }}</b></div>
+</div>
+<div class="l-cols">
+  <div class="u-stack">{% include "partials/active_sessions.html" %}
+    <div class="c-panel"><div class="c-panel__head"><h2>最近の録画</h2><a class="u-sub" href="/recordings">すべて表示 ›</a></div>
+      {% if d.recent %}<div class="c-table-wrap"><table class="c-table"><tbody>
+      {% for s in d.recent %}<tr><td><div class="u-cell2"><b><a href="/recordings/{{ s.id }}">{{ s.display_name }}</a></b><span class="u-sub">{{ s.detected_at|dt }}</span></div></td><td class="is-right u-num">{{ s.duration_ms|hhmmss }}</td><td class="is-right u-num">{{ s.size|size }}</td><td>{{ ui.badge("warn", "欠損・失敗あり") if (s.invalid_segments or s.gap_count) else ui.badge("live", "完了") }}</td></tr>{% endfor %}
+      </tbody></table></div>{% else %}{{ ui.empty("録画はまだありません") }}{% endif %}</div></div>
+  <div class="u-stack">
+    <div class="c-panel"><div class="c-panel__head"><h2>ストレージ</h2></div><div class="c-panel__body">
+      {% if d.disk_total %}{% set used = d.disk_total - d.disk_free %}<div class="u-row u-between" style="align-items:baseline"><span style="font-size:var(--fs-metric);font-weight:600">{{ (used * 100 // d.disk_total) }}<small class="u-sub">% 使用</small></span><span class="u-sub u-num">{{ used|size }} / {{ d.disk_total|size }}</span></div>
+      <div class="c-bar" style="margin:10px 0"><i style="width:{{ used * 100 // d.disk_total }}%"></i></div>
+      <div class="u-sub">最低空き容量 {{ settings.min_free_gib }} GiB を下回ると新しい録画を開始しません。</div>
+      {% else %}<div class="u-mute">保存先の容量を取得できません（未接続の可能性）。</div>{% endif %}</div></div>
+    <div class="c-panel"><div class="c-panel__head"><h2>直近の警告・エラー</h2><a class="u-sub" href="/logs">履歴 ›</a></div>
+      {% for e in d.warnings %}<div class="c-comment"><span class="u-sub u-num">{{ e.created_at|dt("%m-%d %H:%M:%S") }}</span> {{ ui.badge("err", "エラー") if e.severity == "error" else ui.badge("warn", "警告") }}<p>{{ e.message }}</p></div>{% else %}{{ ui.empty("警告・エラーはありません") }}{% endfor %}</div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block crumb %}<span aria-hidden="true">/</span><span>{{ s.display_name }}</span>{% endblock %}
+{% block content %}
+<div class="l-page-head"><div><h1>{{ s.title or "（タイトルなし）" }}</h1><div class="u-sub u-row" style="margin-top:4px">{{ ui.tag(s.platform) }}<span>{{ s.display_name }} · @{{ s.platform_user_id }}</span></div></div>
+  <div class="u-row u-wrap">{{ ui.session_badges(s) }}{% if s.status == 'ENDED' and s.end_reason == 'unconfirmed' %}{{ ui.badge("warn", "終了根拠は未確認") }}{% endif %}</div></div>
+{% if s.status == 'ENDED' %}<div class="c-panel"><div class="c-panel__body u-row u-wrap u-between">
+  <span class="u-mute">{% if s.end_reason == 'unconfirmed' and not s.manual_convergence_at %}終了根拠が確認できていません。削除するには、取得再開の可能性を確認したうえで手動収束を確定します。{% elif s.manual_convergence_at %}手動収束済み（{{ s.manual_convergence_at|dt }}）{% else %}アーカイブ全体（動画・全字幕・コメント・履歴）を削除できます。{% endif %}</span>
+  <span class="u-row">{% if s.end_reason == 'unconfirmed' and not s.manual_convergence_at %}<button class="c-btn" data-action="manual-converge" data-id="{{ s.id }}">手動収束を確定</button>{% endif %}<button class="c-btn c-btn--danger" data-action="delete-archive" data-id="{{ s.id }}" data-name="{{ s.title or s.display_name }}" {{ 'disabled' if s.end_reason == 'unconfirmed' and not s.manual_convergence_at }}>アーカイブを削除</button></span></div></div>{% endif %}
+<div class="c-panel c-strip"><div><div class="u-sub">開始検知</div><b class="u-num">{{ s.detected_at|dt }}</b></div><div><div class="u-sub">収束</div><b class="u-num">{{ s.ended_at|dt }}</b></div><div><div class="u-sub">コメント</div><b class="u-num">{{ s.comment_count }}</b></div><div><div class="u-sub">録画容量</div><b class="u-num">{{ s.size|size }}</b></div></div>
+{% if s.invalid_segments or s.gaps %}<div class="c-alert c-alert--warn">{{ ui.icon("warn") }}無効なセグメント {{ s.invalid_segments }} 件 / 記録された欠損 {{ s.gaps|length }} 件があります。取得できなかった期間は「完全成功」として扱いません。</div>{% endif %}
+<div class="c-panel"><div class="c-panel__head"><h2>セグメント</h2></div>
+{% if s.segment_list %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>#</th><th>ファイル</th><th>状態</th><th>エンジン</th><th class="is-right">長さ</th><th class="is-right">容量</th><th>コメントSRT</th><th>音声SRT</th><th>ASS</th><th></th></tr></thead><tbody>
+{% for g in s.segment_list %}<tr><td class="u-num">{{ ("s%03d"|format(g.segment_number)) if g.segment_number else "—" }}</td>
+<td><span class="u-mono">{{ g.file_path or g.temp_path or "—" }}</span></td>
+<td>{{ ui.badge("live", "確定") if g.validation_status == "valid" else (ui.badge("err", "無効（一時ファイル保全）") if g.validation_status == "invalid" else ui.badge("warn", "未確定")) }}</td>
+<td class="u-sub">{{ g.recorder_engine or "—" }}</td><td class="is-right u-num">{{ g.duration_ms|hhmmss }}</td><td class="is-right u-num">{{ g.file_size|size }}</td>
+<td>{{ {"generated": ui.badge("live", "生成済み"), "skipped": ui.badge("idle", "対象なし"), "failed": ui.badge("err", "失敗"), "none": ui.badge("idle", "未生成")}[g.srt_status] }}{% if g.srt_error %}<div class="u-sub">{{ g.srt_error }}</div>{% endif %}</td>
+<td class="u-sub">{{ g.speech_status }}</td><td class="u-sub">{{ g.ass_status }}</td>
+<td class="is-right">{% if g.validation_status == "valid" and s.status == "ENDED" %}<button class="c-btn c-btn--sm" data-action="regen-srt" data-id="{{ g.id }}">コメントSRTを再生成</button>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}{{ ui.empty("セグメントはありません", "コメントのみのセッション、または録画が未確定です。") }}{% endif %}</div>
+<div class="l-cols"><div class="c-panel"><div class="c-panel__head"><h2>ジョブ</h2></div><div class="c-table-wrap"><table class="c-table"><thead><tr><th>種別</th><th>状態</th><th>開始</th><th>詳細</th></tr></thead><tbody>
+{% for j in s.recording_jobs %}<tr><td>録画 #{{ j.id }}</td><td>{{ j.status }}</td><td class="u-num">{{ j.started_at|dt }}</td><td class="u-sub">{{ j.recorder_engine or "" }} {{ j.last_error or "" }}</td></tr>{% endfor %}
+{% for j in s.comment_jobs %}<tr><td>コメント #{{ j.id }}</td><td>{{ j.status }}</td><td class="u-num">{{ j.started_at|dt }}</td><td class="u-sub">受信 {{ j.received_count }} / 保存 {{ j.stored_count }} / 重複 {{ j.duplicate_count }}{% if not j.counts_complete %}（件数不完全）{% endif %} {{ j.last_error or "" }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="c-panel"><div class="c-panel__head"><h2>欠損・イベント</h2></div>
+{% for gp in s.gaps %}<div class="c-comment"><span class="u-sub u-num">{{ gp.started_at|dt("%m-%d %H:%M:%S") }} – {{ gp.ended_at|dt("%H:%M:%S") }}</span> {{ ui.badge("warn", gp.job_type) }}<p>{{ gp.reason }}</p></div>{% endfor %}
+{% for e in s.events %}<div class="c-comment"><span class="u-sub u-num">{{ e.created_at|dt("%m-%d %H:%M:%S") }}</span> <span class="u-sub">{{ e.severity }}</span><p>{{ e.message }}</p></div>{% else %}{% if not s.gaps %}{{ ui.empty("記録はありません") }}{% endif %}{% endfor %}</div></div>
+{% endblock %}

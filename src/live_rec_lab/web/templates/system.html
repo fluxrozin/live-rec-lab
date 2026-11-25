@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="l-page-head"><h1>システム状態</h1></div>
+<div class="l-cols"><div class="u-stack">
+ <div class="c-panel"><div class="c-panel__head"><h2>実行環境</h2></div><div class="c-panel__body"><dl class="c-kv">
+  <dt>モード</dt><dd>{{ "開発者モード（隔離）" if mode == "developer" else "通常運用" }}</dd><dt>インスタンス</dt><dd class="u-mono">{{ app_ctx.instance_id }}</dd>
+  <dt>起動時刻</dt><dd class="u-num">{{ app_ctx.started_at|dt }}</dd><dt>コード版</dt><dd class="u-mono">{{ app_ctx.code_revision }}</dd>
+  <dt>待受ポート</dt><dd class="u-num">{{ app_ctx.port }}（保存値 {{ settings.web_port }}）</dd>
+  <dt>スケジューラ</dt><dd>{{ "無効（監視・新規ジョブを開始しません）" if app_ctx.scheduler_disabled else "稼働中" }}</dd>
+  <dt>外部通信</dt><dd>{{ "許可（--allow-live）" if app_ctx.gate.allow_live else "既定で拒否" }}</dd></dl></div></div>
+ <div class="c-panel"><div class="c-panel__head"><h2>メディアツール</h2>{{ ui.badge("live", "正常") if tools.ok else ui.badge("err", "異常") }}</div><div class="c-panel__body"><dl class="c-kv">
+  <dt>ffmpeg</dt><dd class="u-mono">{{ tools.ffmpeg }} （{{ tools.ffmpeg_version }}）</dd><dt>ffprobe</dt><dd class="u-mono">{{ tools.ffprobe }} （{{ tools.ffprobe_version }}）</dd>
+  <dt>解決元</dt><dd>{{ tools.source }}</dd><dt>デコーダ</dt><dd>{% for k, v in tools.decoders.items() %}{{ k }}: {{ "可" if v else "不可" }}　{% endfor %}</dd></dl>{% if tools.error %}<div class="c-field-error">{{ tools.error }}</div>{% endif %}</div></div>
+ </div><div class="u-stack">
+ <div class="c-panel"><div class="c-panel__head"><h2>保存先</h2></div><div class="c-panel__body"><dl class="c-kv"><dt>録画ルート</dt><dd class="u-mono">{{ root }}</dd><dt>状態</dt><dd>{{ ui.badge("live", "利用可") if storage.ok else ui.badge("err", "利用不可") }} {{ storage.reason or "" }}</dd><dt>空き容量</dt><dd class="u-num">{{ storage.free_bytes|size }}</dd></dl></div></div>
+ <div class="c-panel"><div class="c-panel__head"><h2>資格情報</h2></div><div class="c-panel__body"><dl class="c-kv"><dt>ツイキャス</dt><dd>{{ "設定済み" if "TWITCASTING_CLIENT_ID" in app_ctx.env.secrets and "TWITCASTING_CLIENT_SECRET" in app_ctx.env.secrets else "未設定（連携を保留）" }}</dd><dt>署名キー</dt><dd>{{ "設定済み" if "SIGN_API_KEY" in app_ctx.env.secrets else "未設定（TikTokコメント接続を保留）" }}</dd></dl><div class="u-sub" style="margin-top:8px">値は表示しません。</div></div></div>
+ <div class="c-panel"><div class="c-panel__head"><h2>ストレージ照合</h2><button class="c-btn c-btn--sm" data-action="start-scan">照合を実行</button></div><div class="c-panel__body">
+  {% if scan and scan.result %}{% set r = scan.result %}<dl class="c-kv"><dt>実施</dt><dd class="u-num">{{ r.started_at|dt }}（{{ "取消" if r.cancelled else "完了" }}）</dd><dt>正常</dt><dd class="u-num">{{ r.ok }} / 登録 {{ r.total_registered }}</dd><dt>不在</dt><dd class="u-num">{{ r.missing|length }}</dd><dt>サイズ不一致</dt><dd class="u-num">{{ r.size_mismatch|length }}</dd><dt>未登録</dt><dd class="u-num">{{ r.unregistered|length }}</dd><dt>一時ファイル</dt><dd class="u-num">{{ r.temp|length }}</dd><dt>未確認</dt><dd class="u-num">{{ r.unconfirmed|length }}</dd></dl>{% if r.error %}<div class="c-field-error">{{ r.error }}</div>{% endif %}
+  {% elif scan and scan.running %}<div class="u-mute">照合中…</div>{% else %}<div class="u-mute">未実施（再起動後の結果は未確認として扱います）。自動修復・取込・削除は行いません。</div>{% endif %}</div></div>
+ <div class="c-panel"><div class="c-panel__head"><h2>直近のイベント</h2></div>{% for e in events %}<div class="c-comment"><span class="u-sub u-num">{{ e.created_at|dt("%m-%d %H:%M:%S") }}</span> <span class="u-sub">{{ e.severity }}</span><p>{{ e.message }}</p></div>{% else %}{{ ui.empty("イベントはありません") }}{% endfor %}</div>
+</div></div>
+{% endblock %}

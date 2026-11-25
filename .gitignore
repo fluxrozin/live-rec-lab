@@ -59,3 +59,5 @@ test-results/
 
 # Node tooling for Markdown format / lint
 node_modules/
+
+!.env.dev.example

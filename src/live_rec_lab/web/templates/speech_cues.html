@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block crumb %}<span aria-hidden="true">/</span><span>発話本文</span>{% endblock %}
+{% block content %}
+<div class="l-page-head"><h1>発話本文</h1><a class="c-btn" href="/speech">音声字幕へ戻る</a></div>
+<form class="c-toolbar" method="get" action="/speech/cues" role="search"><input class="c-input" type="search" name="q" value="{{ q }}" placeholder="本文で検索" aria-label="本文" style="width:260px"><select class="c-select" name="order" aria-label="順序"><option value="asc" {{ 'selected' if order=='asc' }}>時刻の昇順</option><option value="desc" {{ 'selected' if order=='desc' }}>時刻の降順</option></select><button class="c-btn" type="submit">検索</button></form>
+<div class="c-panel">{% for c in res["items"] %}<div class="c-comment"><span class="u-sub u-num">セッション {{ c.session_id }} · {{ c.start_ms|hhmmss }} – {{ c.end_ms|hhmmss }}</span><p>{{ c.text }}</p></div>{% else %}{{ ui.empty("発話はありません", "自動認識の結果です。話者の同定や全発話の取得は保証しません。") }}{% endfor %}{% if res["items"] %}{{ ui.pager(res, base_url) }}{% endif %}</div>
+{% endblock %}

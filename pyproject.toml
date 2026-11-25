@@ -19,7 +19,10 @@ dependencies = [
     "pydantic-settings>=2.16.3",
     "python-multipart>=0.0.34",
     "sqlalchemy>=2",
+    "streamlink>=8.6.3",
+    "tiktoklive>=7.0.1",
     "uvicorn[standard]>=0.54.0",
+    "yt-dlp[curl-cffi]>=2026.10.26",
 ]
 
 # 採用アダプターを実装する時点で正式な dependencies に追加し、必要な切替を完成させる。
@@ -34,7 +37,11 @@ dependencies = [
 # コアの初期同期では speech extra をインストールしない。音声実装段階で追加する。
 # CUDA追加依存は採用環境で実証後、必要な場合のみ正式定義し、lock・起動手順・README・manualと同期する。
 [project.optional-dependencies]
-speech = ["faster-whisper>=1.1,<2"]
+speech = [
+    "faster-whisper>=1.1,<2",
+    "nvidia-cublas-cu12>=12.4,<13",
+    "nvidia-cudnn-cu12>=9,<10",
+]
 
 [project.scripts]
 live-rec-lab = "live_rec_lab.cli:main"
@@ -63,6 +70,9 @@ markers = [
 target-version = "py312"
 line-length = 120
 src = ["src", "tests"]
+extend-exclude = ["src/live_rec_lab/migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+

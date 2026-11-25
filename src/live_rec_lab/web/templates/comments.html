@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="l-page-head"><h1>コメント</h1></div>
+<form class="c-toolbar" method="get" action="/comments" role="search">
+  <select class="c-select" name="mode" aria-label="表示"><option value="all" {{ 'selected' if mode=='all' }}>横断検索</option><option value="session" {{ 'selected' if mode=='session' }}>配信別</option></select>
+  <input class="c-input" type="search" name="q" value="{{ q }}" placeholder="本文" aria-label="本文" style="width:220px">
+  <input class="c-input" type="search" name="user" value="{{ user }}" placeholder="投稿者名・ID" aria-label="投稿者" style="width:160px">
+  <select class="c-select" name="platform" aria-label="サービス"><option value="">すべてのサービス</option><option value="tiktok" {{ 'selected' if platform=='tiktok' }}>TikTok</option><option value="twitcasting" {{ 'selected' if platform=='twitcasting' }}>ツイキャス</option></select>
+  <input class="c-input" type="date" name="date_from" value="{{ date_from }}" aria-label="開始日"><span class="u-mute">〜</span><input class="c-input" type="date" name="date_to" value="{{ date_to }}" aria-label="終了日">
+  <select class="c-select" name="order" aria-label="順序"><option value="desc" {{ 'selected' if order=='desc' }}>新しい順</option><option value="asc" {{ 'selected' if order=='asc' }}>古い順</option></select>
+  {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}">{% endif %}
+  <button class="c-btn" type="submit">検索</button></form>
+{% if error %}<div class="c-alert c-alert--err">{{ error }}</div>{% endif %}
+<div class="c-panel">
+{% if mode == 'session' and not session_id %}
+  {% if sess["items"] %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>配信</th><th>開始</th><th class="is-right">コメント</th></tr></thead><tbody>
+  {% for s in sess["items"] %}<tr><td><div class="u-cell2"><b><a href="/comments?mode=session&session_id={{ s.id }}&order=asc">{{ s.display_name }}</a></b><span class="u-sub">{{ ui.tag(s.platform) }} {{ s.title or "（タイトルなし）" }}</span></div></td><td class="u-num">{{ s.detected_at|dt }}</td><td class="is-right u-num">{{ s.n }}</td></tr>{% endfor %}</tbody></table></div>{{ ui.pager(sess, base_url) }}
+  {% else %}{{ ui.empty("コメントのある配信はありません") }}{% endif %}
+{% else %}
+  {% for c in res["items"] %}<div class="c-comment"><div class="u-row u-wrap"><span class="u-sub u-num">{{ c.effective_at|dt }}</span><b>{{ c.nickname or "（表示名なし）" }}</b>{% if c.is_anonymous %}{{ ui.badge("idle", "匿名") }}{% elif c.platform_user_id %}<span class="u-sub">@{{ c.platform_user_id }}</span>{% endif %}<span class="u-sub">· {{ c.streamer_name }}</span></div><p>{{ c.message }}</p></div>
+  {% else %}{{ ui.empty("該当するコメントはありません", "収集していない期間や、削除されたコメントは取得できません。") }}{% endfor %}
+  {% if res["items"] %}{{ ui.pager(res, base_url) }}{% endif %}
+{% endif %}</div>
+{% endblock %}

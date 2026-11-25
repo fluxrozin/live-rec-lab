@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="l-page-head"><h1>ログ</h1></div>
+<form class="c-toolbar" method="get" action="/logs" role="search">
+  <select class="c-select" name="level" aria-label="重要度"><option value="">すべての重要度</option>{% for l in ["DEBUG","INFO","WARNING","ERROR"] %}<option {{ 'selected' if level==l }}>{{ l }}</option>{% endfor %}</select>
+  <input class="c-input" type="search" name="source" value="{{ source }}" placeholder="出力元" aria-label="出力元" style="width:160px">
+  <input class="c-input" type="search" name="q" value="{{ q }}" placeholder="メッセージ" aria-label="メッセージ" style="width:240px">
+  <button class="c-btn" type="submit">絞り込み</button></form>
+<div class="c-panel">{% if res["items"] %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>時刻</th><th>重要度</th><th>出力元</th><th>メッセージ</th></tr></thead><tbody>
+{% for e in res["items"] %}<tr><td class="u-num u-sub" style="white-space:nowrap">{{ e.ts|dt }}</td><td>{{ ui.badge("err", e.level) if e.level in ("ERROR","CRITICAL") else (ui.badge("warn", e.level) if e.level == "WARNING" else ui.badge("idle", e.level)) }}</td><td class="u-sub">{{ e.source }}</td>
+<td><span style="overflow-wrap:anywhere">{{ e.message }}</span>{% if e.exc %}<details class="c-details"><summary>詳細</summary><pre class="u-mono" style="white-space:pre-wrap">{{ e.exc }}</pre></details>{% endif %}<div class="u-sub u-mono">{{ e.event_id }}{% if e.session_id %} · session {{ e.session_id }}{% endif %}</div></td></tr>{% endfor %}
+</tbody></table></div>{{ ui.pager(res, base_url) }}{% if res.truncated %}<div class="u-sub" style="padding:0 16px 12px">新しい順に一定件数まで読み込んでいます。</div>{% endif %}{% else %}{{ ui.empty("該当するログはありません") }}{% endif %}</div>
+{% endblock %}
