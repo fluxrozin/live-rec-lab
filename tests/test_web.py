@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from live_rec_lab import streamers
+from live_rec_lab import sessions, storage, streamers
 from live_rec_lab.app import create_app
+from live_rec_lab.db.models import recording_jobs, recording_segments
 
 
 def _client(ctx):
@@ -13,6 +14,41 @@ def _client(ctx):
     ctx.scheduler_disabled = True
     app = create_app(ctx)
     return TestClient(app, base_url=f"http://127.0.0.1:{ctx.port}")
+
+
+def test_recording_size_grows_before_segment_is_finalized(ctx):
+    root = ctx.env.recording_root
+    raw = root / "sample" / "2026-11-25" / f".rec-a123456789.raw{storage.TMP_SUFFIX}"
+    raw.parent.mkdir(parents=True)
+    with ctx.engine.begin() as conn:
+        streamer = streamers.register(conn, streamers.StreamerInput("tiktok", "sample", None, True, True, False))
+        session, _ = sessions.open_session(conn, streamer, "room", "架空配信", None, root)
+        sid = session["id"]
+        job = sessions.create_recording_job(conn, sid, None)
+        sessions.update_job(conn, recording_jobs, job, status="RECORDING")
+        conn.execute(recording_segments.insert().values(
+            recording_job_id=job, stream_session_id=sid, segment_number=1, file_path="sample/previous.mp4",
+            file_size=1024, validation_status="valid", created_at=session["created_at"]))
+        pending_id = sessions.add_pending_segment(conn, job, sid, "streamlink", str(raw), "a123456789")
+
+    with _client(ctx) as client:
+        partial = "/partials/active-sessions"
+        assert "1.0 KiB" in client.get(partial).text
+        raw.write_bytes(bytes(1024))
+        assert "2.0 KiB" in client.get(partial).text
+        with raw.open("ab") as file:
+            file.write(bytes(2048))
+        for path in ("/", partial, "/recordings", f"/recordings/{sid}"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert "4.0 KiB" in response.text, path
+        assert "3.0 KiB" in client.get(f"/recordings/{sid}").text
+        assert client.get("/api/v1/dashboard").json()["managed_bytes"] == 1024
+
+        with ctx.engine.begin() as conn:
+            conn.execute(recording_segments.update().where(recording_segments.c.id == pending_id).values(
+                segment_number=2, file_size=4096, validation_status="valid", temp_path=None))
+        assert "5.0 KiB" in client.get(partial).text
 
 
 def test_pages_security_and_settings(ctx):

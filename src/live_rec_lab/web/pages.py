@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from stat import S_ISREG
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -43,12 +44,42 @@ def _day(s: str | None, tz: str, end: bool = False) -> datetime | None:
     return d + timedelta(days=1) if end else d
 
 
+def _add_recording_sizes(rows: list[dict], pending: list[dict]) -> None:
+    """確定容量に書き込み中の実サイズを足す。ファイルの確認はDB取引の外で行う。"""
+    by_session = {s["id"]: s for s in rows}
+    for seg in pending:
+        session = by_session[seg["stream_session_id"]]
+        if not session["recording_root"]:
+            continue
+        root = Path(session["recording_root"])
+        path = Path(seg["temp_path"])
+        if not root.is_absolute() or not path.is_relative_to(root) or not path.name.endswith(".raw" + storage.TMP_SUFFIX):
+            continue
+        try:
+            directory = path.parent.resolve(strict=True)
+            if not directory.is_relative_to(root.resolve(strict=True)):
+                continue
+            info = (directory / path.name).lstat()
+        except (OSError, ValueError, RuntimeError):
+            # 書き込み開始前や確定時の入れ替えで一時ファイルが見えないことがある。
+            continue
+        if S_ISREG(info.st_mode):
+            session["size"] += info.st_size
+            for row in session.get("segment_list", ()):
+                if row["id"] == seg["id"]:
+                    row["file_size"] = info.st_size
+                    break
+
+
 def _dashboard_data(request: Request) -> dict:
     ctx = request.app.state.ctx
     with ctx.engine.begin() as conn:
         st = settings_store.get_all(conn)
-        return queries.dashboard(conn, Path(st["recording_root"] or ctx.env.recording_root), st["display_timezone"],
-                                 request.query_params.get("period", "24h"))
+        d = queries.dashboard(conn, Path(st["recording_root"] or ctx.env.recording_root), st["display_timezone"],
+                              request.query_params.get("period", "24h"))
+        pending = queries.pending_recordings(conn, [s["id"] for s in d["active"] if s["recording"]])
+    _add_recording_sizes(d["active"], pending)
+    return d
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -60,8 +91,10 @@ def dashboard(request: Request):
 def active_partial(request: Request):
     ctx = request.app.state.ctx
     with ctx.engine.begin() as conn:
-        d = {"active": queries.active_sessions(conn)}
-    return render(request, "partials/active_sessions.html", "dashboard", d=d)
+        active = queries.active_sessions(conn)
+        pending = queries.pending_recordings(conn, [s["id"] for s in active if s["recording"]])
+    _add_recording_sizes(active, pending)
+    return render(request, "partials/active_sessions.html", "dashboard", d={"active": active})
 
 
 @router.get("/streamers", response_class=HTMLResponse)
@@ -92,8 +125,10 @@ def recordings(request: Request):
         with ctx.engine.begin() as conn:
             res = queries.list_sessions(conn, _int(qp.get("page"), 1), _int(qp.get("page_size"), 50), q=qp.get("q", ""),
                                         platform=qp.get("platform", ""), status=qp.get("status", ""))
+            pending = queries.pending_recordings(conn, [s["id"] for s in res["items"] if s["recording"]])
     except queries.PageError as exc:
         return HTMLResponse(str(exc), status_code=422)
+    _add_recording_sizes(res["items"], pending)
     return render(request, "recordings.html", "recordings", res=res, q=qp.get("q", ""), platform=qp.get("platform", ""),
                   status=qp.get("status", ""), base_url=_base_url(request, "/recordings"))
 
@@ -103,9 +138,11 @@ def recording_detail(request: Request, session_id: int):
     ctx = request.app.state.ctx
     with ctx.engine.begin() as conn:
         s = queries.session_detail(conn, session_id)
+        pending = queries.pending_recordings(conn, [session_id]) if s and s["recording"] else []
     if s is None:
         return render(request, "recordings.html", "recordings", status_code=404, res=queries.paged([], 0, 1, 50), q="",
                       platform="", status="", base_url="/recordings?")
+    _add_recording_sizes([s], pending)
     return render(request, "recording_detail.html", "recordings", s=s)
 
 

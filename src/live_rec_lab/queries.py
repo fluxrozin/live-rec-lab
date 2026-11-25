@@ -95,6 +95,19 @@ def active_sessions(conn: Connection) -> list[dict]:
     return rows
 
 
+def pending_recordings(conn: Connection, session_ids: list[int]) -> list[dict]:
+    """容量表示用に、稼働中の録画ジョブが持つ未確定パスを取得する。"""
+    if not session_ids:
+        return []
+    seg = recording_segments.c
+    job = recording_jobs.c
+    q = select(seg.id, seg.stream_session_id, seg.temp_path).join(
+        recording_jobs, job.id == seg.recording_job_id).where(
+        seg.stream_session_id.in_(session_ids), seg.validation_status == "pending", seg.temp_path.is_not(None),
+        job.status.in_(("RECORDING", "FINALIZING")))
+    return [dict(row) for row in conn.execute(q).mappings()]
+
+
 def session_detail(conn: Connection, sid: int) -> dict | None:
     rows, _ = _session_rows(conn, [stream_sessions.c.id == sid], 1, 1)
     if not rows:
