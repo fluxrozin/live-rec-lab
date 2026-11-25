@@ -1,0 +1,40 @@
+{% import "components/ui.html" as ui with context %}
+<div class="c-panel" id="streamer-results" hx-get="{{ refresh_url }}" hx-trigger="every {{ refresh }}s, streamers-resume"
+     hx-swap="outerHTML" hx-sync="this:drop" hx-push-url="false" hx-request='{"timeout": 10000}'>
+{% if rows %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>配信者</th><th>状態</th><th>監視</th><th>録画</th><th>コメント</th><th>最終正常確認</th><th>最終配信</th><th class="is-right">操作</th></tr></thead><tbody id="streamer-rows">
+{% for s in rows %}<tr id="streamer-{{ s.id }}" data-id="{{ s.id }}">
+  <td><div class="u-cell2"><b>{{ s.display_name }}</b><span class="u-sub">{{ ui.tag(s.platform) }} @{{ s.platform_user_id }}</span></div></td>
+  {% set failed = s.monitoring_enabled and s.diag and s.diag.state in ('UNKNOWN', 'ERROR') %}
+  <td>
+    <div class="u-row u-wrap">
+      {% if s.active_session %}{{ ui.session_badges(s.active_session) }}
+      {% elif not s.monitoring_enabled %}{{ ui.badge("idle", "監視停止") }}
+      {% elif not s.diag %}{{ ui.badge("idle", "確認待ち") }}
+      {% elif s.diag.state == 'DISABLED' %}{{ ui.badge("idle", "外部通信は無効") }}
+      {% elif s.diag.state == 'LIVE' %}{{ ui.badge("live", "配信中", True) }}
+      {% elif s.diag.state == 'OFFLINE' %}{{ ui.badge("idle", "オフライン") }}
+      {% endif %}
+      {% if failed %}{{ ui.badge("warn", "監視不明" if s.active_session else "状態不明") }}{% endif %}
+    </div>
+    {% if failed %}
+    <div class="u-sub">{{ s.diag.reason }}{% if s.diag.failure_count %} · 連続{{ s.diag.failure_count }}回{% endif %}</div>
+    {% if s.diag.last_failure_at %}<div class="u-sub u-num">最終失敗 {{ s.diag.last_failure_at|dt("%m-%d %H:%M:%S") }}</div>{% endif %}
+    {% endif %}
+  </td>
+  <td>{{ ui.switch("monitoring_enabled", s.monitoring_enabled, "監視", 'data-action="toggle" data-field="monitoring_enabled"') }}</td>
+  <td>{{ ui.switch("recording_enabled", s.recording_enabled, "録画", 'data-action="toggle" data-field="recording_enabled"') }}</td>
+  <td>{{ ui.switch("comments_enabled", s.comments_enabled, "コメント収集", 'data-action="toggle" data-field="comments_enabled"') }}</td>
+  <td class="u-sub u-num">{{ s.last_checked_at|dt("%m-%d %H:%M:%S") }}</td><td class="u-sub u-num">{{ s.last_live_at|dt("%m-%d %H:%M") }}</td>
+  <td class="is-right"><span class="u-row" style="justify-content:flex-end">
+    <button class="c-btn c-btn--sm c-btn--ghost" data-action="move" data-dir="-1" aria-label="上へ" {{ 'disabled' if loop.first }}>{{ ui.icon("up") }}</button>
+    <button class="c-btn c-btn--sm c-btn--ghost" data-action="move" data-dir="1" aria-label="下へ" {{ 'disabled' if loop.last }}>{{ ui.icon("down") }}</button>
+    <button class="c-btn c-btn--sm" data-action="edit" data-name="{{ s.display_name }}">名前を編集</button>
+    <button class="c-btn c-btn--sm c-btn--danger" data-action="delete" data-name="{{ s.display_name }}">削除</button></span></td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}{{ ui.empty("配信者が登録されていません", "「配信者を追加」から TikTok / ツイキャスのIDまたはプロフィールURLを登録します。") }}{% endif %}
+</div>
+{% if partial %}
+{% include "partials/streamer_count.html" %}
+<span id="rendered-at" class="u-num" hx-swap-oob="true">{{ now }}</span>
+<span id="streamer-refresh-error" role="status" hx-swap-oob="true"></span>
+{% endif %}

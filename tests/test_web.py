@@ -91,3 +91,21 @@ def test_pages_security_and_settings(ctx):
         assert c.delete(f"/api/v1/streamers/{sid}?confirm=true", headers=h).status_code == 200
         order = c.get("/api/v1/streamers/order").json()
         assert c.put("/api/v1/streamers/order", json={"ordered_ids": order["ordered_ids"], "order_revision": 999}, headers=h).status_code == 409
+
+
+def test_streamer_refresh_reads_fresh_rows_with_applied_filters(ctx):
+    with ctx.engine.begin() as conn:
+        streamers.register(conn, streamers.StreamerInput("tiktok", "sample", "架空 & テスト", True, True, True))
+        streamers.register(conn, streamers.StreamerInput("twitcasting", "sample", "別サービス & テスト", True, True, True))
+    with _client(ctx) as c:
+        filters = {"q": "& テスト", "platform": "tiktok"}
+        page = c.get("/streamers", params=filters)
+        assert 'hx-get="/partials/streamers?' in page.text
+        with ctx.engine.begin() as conn:
+            conn.exec_driver_sql("UPDATE streamers SET last_checked_at = '2026-11-25T01:23:45Z' WHERE platform = 'tiktok'")
+        fragment = c.get("/partials/streamers", params=filters)
+        assert fragment.status_code == 200
+        assert "架空 &amp; テスト" in fragment.text
+        assert "別サービス" not in fragment.text
+        assert "11-25 10:23:45" in fragment.text
+        assert 'id="add-form"' not in fragment.text

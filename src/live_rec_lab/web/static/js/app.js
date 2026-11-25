@@ -25,6 +25,19 @@
       return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
     });
   }
+
+  var streamerWrites = 0;
+  async function streamerWrite(save) {
+    streamerWrites++;
+    document.dispatchEvent(new Event("streamer-write"));
+    try {
+      return await save();
+    } finally {
+      streamerWrites--;
+      document.dispatchEvent(new Event("streamer-write"));
+    }
+  }
+
   function errText(res) {
     var e = (res.body && res.body.error) || {};
     var f = e.fields ? " (" + Object.keys(e.fields).map(function (k) { return k + ": " + e.fields[k]; }).join(" / ") + ")" : "";
@@ -64,7 +77,7 @@
     if (a === "delete" && row) {
       confirmDialog("配信者を削除", "「" + t.dataset.name + "」を一覧から削除します。過去の録画・コメント履歴は残ります。", "削除").then(function (ok) {
         if (!ok) return;
-        api("DELETE", "/api/v1/streamers/" + row.dataset.id + "?confirm=true").then(function (r) {
+        streamerWrite(() => api("DELETE", "/api/v1/streamers/" + row.dataset.id + "?confirm=true")).then(function (r) {
           if (r.ok) { toast("削除しました"); location.reload(); } else toast(errText(r), true);
         });
       });
@@ -72,7 +85,7 @@
     if (a === "edit" && row) {
       confirmDialog("表示名を編集", "", "保存", true, t.dataset.name).then(function (v) {
         if (v === null) return;
-        api("PATCH", "/api/v1/streamers/" + row.dataset.id, { display_name: v }).then(function (r) {
+        streamerWrite(() => api("PATCH", "/api/v1/streamers/" + row.dataset.id, { display_name: v })).then(function (r) {
           if (r.ok) { toast("保存しました"); location.reload(); } else toast(errText(r), true);
         });
       });
@@ -83,7 +96,8 @@
       if (j < 0 || j >= rows.length) return;
       var ids = rows.map(function (r) { return parseInt(r.dataset.id, 10); });
       var tmp = ids[i]; ids[i] = ids[j]; ids[j] = tmp;
-      api("GET", "/api/v1/streamers/order").then(function (cur) {
+      streamerWrite(async function () {
+        var cur = await api("GET", "/api/v1/streamers/order");
         return api("PUT", "/api/v1/streamers/order", { ordered_ids: ids, order_revision: cur.body.order_revision });
       }).then(function (r) { if (r.ok) location.reload(); else toast(errText(r), true); });
     }
@@ -148,7 +162,7 @@
     var t = e.target;
     if (t.matches && t.matches('input[data-action="toggle"]')) {
       var row = t.closest("tr[data-id]"), body = {}; body[t.dataset.field] = t.checked;
-      api("PATCH", "/api/v1/streamers/" + row.dataset.id, body).then(function (r) {
+      streamerWrite(() => api("PATCH", "/api/v1/streamers/" + row.dataset.id, body)).then(function (r) {
         if (!r.ok) { t.checked = !t.checked; toast(errText(r), true); } else toast("保存しました");
       });
     }
@@ -161,7 +175,7 @@
     var f = addForm.elements, err = document.getElementById("add-error");
     var body = { platform: f.platform.value, account: f.account.value, display_name: f.display_name.value || null,
       monitoring_enabled: f.monitoring_enabled.checked, recording_enabled: f.recording_enabled.checked, comments_enabled: f.comments_enabled.checked };
-    api("POST", "/api/v1/streamers", body).then(function (r) {
+    streamerWrite(() => api("POST", "/api/v1/streamers", body)).then(function (r) {
       if (r.ok) { location.reload(); } else { err.textContent = errText(r); }
     });
   });
@@ -221,7 +235,67 @@
     refresh();
   }
 
-  /* ---- 自動更新: 操作中は延期、古い応答は破棄（HTMX） ---- */
+  /* ---- 配信者一覧の自動更新 ---- */
+  var streamerSearch = document.getElementById("streamer-search");
+  if (streamerSearch) {
+    var pointerDown = false, deferred = false, refreshing = false;
+
+    function refreshBlocked() {
+      var focus = document.activeElement;
+      var selection = document.getSelection();
+      return document.hidden || pointerDown || streamerWrites || document.querySelector("dialog[open]") ||
+        streamerSearch.contains(focus) || document.getElementById("streamer-results").contains(focus) ||
+        (selection && !selection.isCollapsed);
+    }
+
+    function resumeRefresh() {
+      requestAnimationFrame(function () {
+        if (deferred && !refreshing && !refreshBlocked()) {
+          htmx.trigger("#streamer-results", "streamers-resume");
+        }
+      });
+    }
+
+    function interactionChanged() {
+      if (document.hidden || (refreshing && refreshBlocked())) deferred = true;
+      if (deferred) resumeRefresh();
+    }
+
+    document.addEventListener("pointerdown", function () { pointerDown = true; interactionChanged(); });
+    ["pointerup", "pointercancel"].forEach(function (event) {
+      window.addEventListener(event, function () { pointerDown = false; interactionChanged(); });
+    });
+    window.addEventListener("blur", function () { pointerDown = false; interactionChanged(); });
+    ["focusin", "focusout", "close", "selectionchange", "visibilitychange", "streamer-write"].forEach(function (event) {
+      document.addEventListener(event, interactionChanged, true);
+    });
+
+    document.body.addEventListener("htmx:beforeRequest", function (e) {
+      if (e.detail.target.id !== "streamer-results") return;
+      if (refreshBlocked()) {
+        deferred = true;
+        e.preventDefault();
+        return;
+      }
+      deferred = false;
+      refreshing = true;
+    });
+    document.body.addEventListener("htmx:beforeSwap", function (e) {
+      if (e.detail.target.id !== "streamer-results") return;
+      if (deferred || refreshBlocked()) {
+        deferred = true;
+        e.preventDefault();
+      }
+    });
+    document.body.addEventListener("htmx:afterRequest", function (e) {
+      if (e.detail.target.id !== "streamer-results") return;
+      refreshing = false;
+      if (deferred) resumeRefresh();
+      else if (e.detail.failed) document.getElementById("streamer-refresh-error").textContent = "更新に失敗しました";
+    });
+  }
+
+  /* ---- ダッシュボードの自動更新 ---- */
   document.body.addEventListener("htmx:beforeRequest", function (e) {
     var a = document.activeElement;
     if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && e.detail.target && e.detail.target.contains(a)) e.preventDefault();

@@ -99,6 +99,15 @@ def active_partial(request: Request):
 
 @router.get("/streamers", response_class=HTMLResponse)
 def streamers_page(request: Request):
+    return _render_streamers(request, partial=False)
+
+
+@router.get("/partials/streamers", response_class=HTMLResponse)
+def streamers_partial(request: Request):
+    return _render_streamers(request, partial=True)
+
+
+def _render_streamers(request: Request, *, partial: bool):
     ctx = request.app.state.ctx
     q, platform = request.query_params.get("q", "").strip().lower(), request.query_params.get("platform", "")
     sup = ctx.services.get("supervisor")
@@ -114,7 +123,10 @@ def streamers_page(request: Request):
         s["active_session"] = active.get(s["id"])
         s["diag"] = sup.diag.get(s["id"]) if sup else None
         rows.append(s)
-    return render(request, "streamers.html", "streamers", rows=rows, total=len(allrows), q=q, platform=platform)
+    refresh_url = "/partials/streamers?" + urlencode({"q": q, "platform": platform})
+    template = "partials/streamers.html" if partial else "streamers.html"
+    return render(request, template, "streamers", rows=rows, total=len(allrows), q=q, platform=platform,
+                  refresh_url=refresh_url, partial=partial)
 
 
 @router.get("/recordings", response_class=HTMLResponse)

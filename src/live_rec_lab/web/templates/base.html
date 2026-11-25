@@ -34,7 +34,7 @@
   <div class="l-main">
     <header class="l-topbar">
       <nav class="c-crumb" aria-label="現在地"><span>{{ 'システム' if active in ('settings','system','logs') else 'メイン' }}</span><span aria-hidden="true">/</span><span aria-current="page">{{ title }}</span>{% block crumb %}{% endblock %}</nav>
-      <span class="u-row">{{ ui.icon("clock") }}表示時点 <span class="u-num" id="rendered-at">{{ now }}</span></span>
+      <span class="u-row">{{ ui.icon("clock") }}表示時点 <span class="u-num" id="rendered-at">{{ now }}</span>{% block freshness %}{% endblock %}</span>
     </header>
     <main class="l-content" id="main">
       {% block content %}{% endblock %}

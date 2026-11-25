@@ -1,28 +1,13 @@
 {% extends "base.html" %}
+{% block freshness %}<span id="streamer-refresh-error" role="status"></span>{% endblock %}
 {% block content %}
 <div class="l-page-head"><h1>配信者</h1><button class="c-btn c-btn--primary" data-action="open-add">{{ ui.icon("plus") }}配信者を追加</button></div>
-<form class="c-toolbar" method="get" action="/streamers" role="search">
+<form id="streamer-search" class="c-toolbar" method="get" action="/streamers" role="search">
   <input class="c-input" type="search" name="q" value="{{ q }}" placeholder="名前・ID で検索" aria-label="検索" style="width:280px">
   <select class="c-select" name="platform" aria-label="サービス"><option value="">すべてのサービス</option><option value="tiktok" {{ 'selected' if platform=='tiktok' }}>TikTok</option><option value="twitcasting" {{ 'selected' if platform=='twitcasting' }}>ツイキャス</option></select>
-  <button class="c-btn" type="submit">絞り込み</button><span class="u-sub" style="margin-left:auto">{{ rows|length }} 件{% if total != rows|length %}（登録 {{ total }} 件）{% endif %}</span>
+  <button class="c-btn" type="submit">絞り込み</button>{% include "partials/streamer_count.html" %}
 </form>
-<div class="c-panel">
-{% if rows %}<div class="c-table-wrap"><table class="c-table"><thead><tr><th>配信者</th><th>状態</th><th>監視</th><th>録画</th><th>コメント</th><th>最終確認</th><th>最終配信</th><th class="is-right">操作</th></tr></thead><tbody id="streamer-rows">
-{% for s in rows %}<tr data-id="{{ s.id }}">
-  <td><div class="u-cell2"><b>{{ s.display_name }}</b><span class="u-sub">{{ ui.tag(s.platform) }} @{{ s.platform_user_id }}</span></div></td>
-  <td><div class="u-row u-wrap">{% if s.active_session %}{{ ui.session_badges(s.active_session) }}{% elif s.diag and s.diag.state == 'DISABLED' %}{{ ui.badge("idle", "外部通信は無効") }}{% elif s.diag and s.diag.state in ('UNKNOWN','ERROR') %}{{ ui.badge("warn", "状態不明") }}{% elif not s.monitoring_enabled %}{{ ui.badge("idle", "監視停止") }}{% else %}{{ ui.badge("idle", "オフライン") }}{% endif %}</div>{% if s.diag and s.diag.reason %}<div class="u-sub">{{ s.diag.reason }}</div>{% endif %}</td>
-  <td>{{ ui.switch("monitoring_enabled", s.monitoring_enabled, "監視", 'data-action="toggle" data-field="monitoring_enabled"') }}</td>
-  <td>{{ ui.switch("recording_enabled", s.recording_enabled, "録画", 'data-action="toggle" data-field="recording_enabled"') }}</td>
-  <td>{{ ui.switch("comments_enabled", s.comments_enabled, "コメント収集", 'data-action="toggle" data-field="comments_enabled"') }}</td>
-  <td class="u-sub u-num">{{ s.last_checked_at|dt("%m-%d %H:%M:%S") }}</td><td class="u-sub u-num">{{ s.last_live_at|dt("%m-%d %H:%M") }}</td>
-  <td class="is-right"><span class="u-row" style="justify-content:flex-end">
-    <button class="c-btn c-btn--sm c-btn--ghost" data-action="move" data-dir="-1" aria-label="上へ" {{ 'disabled' if loop.first }}>{{ ui.icon("up") }}</button>
-    <button class="c-btn c-btn--sm c-btn--ghost" data-action="move" data-dir="1" aria-label="下へ" {{ 'disabled' if loop.last }}>{{ ui.icon("down") }}</button>
-    <button class="c-btn c-btn--sm" data-action="edit" data-name="{{ s.display_name }}">名前を編集</button>
-    <button class="c-btn c-btn--sm c-btn--danger" data-action="delete" data-name="{{ s.display_name }}">削除</button></span></td></tr>{% endfor %}
-</tbody></table></div>
-{% else %}{{ ui.empty("配信者が登録されていません", "「配信者を追加」から TikTok / ツイキャスのIDまたはプロフィールURLを登録します。") }}{% endif %}
-</div>
+{% include "partials/streamers.html" %}
 <dialog class="c-dialog" id="add-dialog"><form method="dialog" id="add-form" class="u-stack">
   <h2 style="margin:0;font-size:var(--fs-section)">配信者を追加</h2>
   <label>サービス<br><select class="c-select" name="platform" required><option value="tiktok">TikTok</option><option value="twitcasting">ツイキャス</option></select></label>
