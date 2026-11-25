@@ -1,4 +1,7 @@
-# 依存下限・ビルド依存の指定は初期候補。互換性問題時は要求§1.3とprompts/implement.mdに従い、理由付きで調整・再lock可。
+# 依存下限・ビルド依存の指定は初期候補。互換性問題時はdocs/requirements.mdとprompts/implement.mdに従い、理由付きで調整・再lock可。
+# 初期同期は最小起動を優先し、互換性・採用判断に応じて、最小起動／Web→採用録画・コメント→speechの順に必要依存を一時整理してよい。
+# optional dependencyもlock解決に影響し得るため、解決不能な候補は一時分離してよい。採用版の公式文書・公開ソース等を確認し、必要な依存下限を調整する。
+# 未採用候補を無条件に追加しない。初期機能と確定した切替を維持し、採用依存の正式定義・uv.lockへ収束する。
 [project]
 name = "live-rec-lab"
 version = "0.1.0"
@@ -10,20 +13,26 @@ authors = [
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.20.1",
-    "curl-cffi>=0.13.0",
     "fastapi>=0.165.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "pydantic-settings>=2.16.3",
     "python-multipart>=0.0.34",
     "sqlalchemy>=2",
-    "streamlink>=8.6.3",
-    "tiktoklive>=7.0.1",
     "uvicorn[standard]>=0.54.0",
-    "yt-dlp>=2026.10.26",
 ]
 
+# 採用アダプターを実装する時点で正式な dependencies に追加し、必要な切替を完成させる。
+# 初期候補（採用版APIに基づき下限調整可。未採用候補は追加しない）：
+#   tiktoklive>=7.0.1   — TikTokコメント（正式機能に必要）
+#   streamlink>=8.6.3    — 優先録画経路（採用する場合）
+#   yt-dlp>=2026.10.26   — 必要な正当な代替経路
+#   curl-cffi>=0.13.0   — 必要なHTTP経路の場合のみ
+# .python-version の3.12と src/live_rec_lab/ の最小パッケージ・CLIを用意してから同期する。
+# 初期候補の版は未検証。依存解決に失敗した場合はコアの成立を優先して採用版を調整する。
+
 # コアの初期同期では speech extra をインストールしない。音声実装段階で追加する。
+# CUDA追加依存は採用環境で実証後、必要な場合のみ正式定義し、lock・起動手順・README・manualと同期する。
 [project.optional-dependencies]
 speech = ["faster-whisper>=1.1,<2"]
 

@@ -44,3 +44,18 @@ test-results/
 
 # UI evidence: shareable reviewed assets remain tracked; raw/local evidence never tracked
 /specs/*/ui/local-artifacts/
+
+/ui/local-artifacts/
+
+# Local media/model caches and raw validation assets (custom locations must also be protected)
+/models/
+/media/
+/local-artifacts/
+/backups/
+/test-artifacts/
+/.cache/
+*.sqlite-wal
+*.sqlite-shm
+
+# Node tooling for Markdown format / lint
+node_modules/
