@@ -25,17 +25,6 @@ prompts/implement.md を実行し、実装可能な初期機能をすべて完�
 | `prompts/implement.md`   | 一気通貫の開発指示                         |
 | `prompts/redesign-ui.md` | 独立したUI探索・再設計                     |
 
-## Markdown
-
-保存時と同じ Prettier（`proseWrap: preserve`）で整形し、markdownlint とリポジトリ内の相対リンクを検査する。
-
-```bash
-npm install
-npm run check:md
-```
-
-整形は `npm run format:md`、markdownlint の自動修正は `npm run lint:md:fix`。
-
 ## 起動と利用（実装後の目標）
 
 通常は `uv sync`、`uv run live-rec-lab start`、`http://127.0.0.1:8082`。開発者は `uv run live-rec-lab start --dev`（隔離8083、外部配信通信既定OFF、録画は専用Linux領域、明示許可済みWindows専用試験フォルダのみ例外）。`status`、`url`、`stop`、`diagnose --json`、`backup DEST`、停止中の `config get/set web_port` を実装する。これらは未実装のスターター段階では利用できない場合がある。正確な依存・起動・権限・Windowsサインイン後起動・字幕・バックアップ／復元手順は実装後のコードと実機結果から本READMEとmanualを完成させる。
